@@ -1,7 +1,7 @@
 use anyhow::Result;
 use eframe::egui::{Color32, Context as EguiContext, FontId, TextStyle, Visuals};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, path::Path};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeConfig {
@@ -20,6 +20,22 @@ impl ThemeConfig {
         toml::from_str(source).map_err(|err| anyhow::anyhow!("failed to parse theme TOML: {err}"))
     }
 
+    pub fn to_toml(&self) -> Result<String> {
+        toml::to_string(self)
+            .map_err(|err| anyhow::anyhow!("failed to serialize theme TOML: {err}"))
+    }
+
+    pub fn save_to<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let toml = self.to_toml()?;
+        fs::write(path, toml)?;
+        Ok(())
+    }
+
+    pub fn load_from<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let content = fs::read_to_string(path)?;
+        Self::from_toml(&content)
+    }
+
     pub fn default_dark() -> Self {
         Self {
             name: "VelociDark".to_string(),
@@ -31,12 +47,31 @@ impl ThemeConfig {
         }
     }
 
+    pub fn default_light() -> Self {
+        Self {
+            name: "VelociLight".to_string(),
+            background: "#fdfdfd".to_string(),
+            foreground: "#10131a".to_string(),
+            accent: "#1e90ff".to_string(),
+            editor_font_size: default_editor_font_size(),
+            preview_font_size: default_preview_font_size(),
+        }
+    }
+
     pub fn apply_to(&self, ctx: &EguiContext) {
-        let mut visuals = Visuals::dark();
+        let mut visuals = if self.name.to_lowercase().contains("light") {
+            Visuals::light()
+        } else {
+            Visuals::dark()
+        };
+
         if let Some(bg) = parse_hex_color(&self.background) {
             visuals.panel_fill = bg;
             visuals.window_fill = bg;
             visuals.extreme_bg_color = bg;
+        }
+        if let Some(fg) = parse_hex_color(&self.foreground) {
+            visuals.override_text_color = Some(fg);
         }
         if let Some(accent) = parse_hex_color(&self.accent) {
             visuals.selection.bg_fill = accent;

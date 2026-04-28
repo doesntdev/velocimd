@@ -1,7 +1,10 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorMode {
     Edit,
     Preview,
+    #[default]
     Split,
 }
 
@@ -20,11 +23,5 @@ impl EditorMode {
             Self::Preview => "Preview",
             Self::Split => "Split",
         }
-    }
-}
-
-impl Default for EditorMode {
-    fn default() -> Self {
-        Self::Split
     }
 }

@@ -1,5 +1,8 @@
-use crate::{app_state::AppState, commands::Command, markdown, modes::EditorMode};
+use crate::{
+    app_state::AppState, commands::Command, markdown, modes::EditorMode, theme::ThemeConfig,
+};
 use eframe::{App, CreationContext, Frame, egui};
+use native_dialog::FileDialogBuilder;
 
 pub struct VelocimdApp {
     state: AppState,
@@ -61,23 +64,39 @@ impl VelocimdApp {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("Theme: {}", self.state.theme.name));
+                    if ui.button("🌓").clicked() {
+                        self.state.execute(Command::TogglePalette);
+                        self.state.command_query = "theme".to_string();
+                    }
                 });
             });
         });
     }
 
     fn tabs(&mut self, ui: &mut egui::Ui) {
+        let mut close_requested = None;
+
         ui.horizontal_wrapped(|ui| {
             for index in 0..self.state.documents.len() {
                 let title = self.state.documents[index].display_title();
-                if ui
-                    .selectable_label(self.state.active_document == index, title)
-                    .clicked()
-                {
-                    self.state.active_document = index;
-                }
+                let is_active = self.state.active_document == index;
+
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(is_active, title).clicked() {
+                        self.state.active_document = index;
+                    }
+
+                    if ui.button("✕").clicked() {
+                        close_requested = Some(index);
+                    }
+                });
             }
         });
+
+        if let Some(index) = close_requested {
+            self.state.close_tab_at(index);
+        }
+
         ui.separator();
     }
 
@@ -166,7 +185,45 @@ impl VelocimdApp {
 
         self.state.command_palette_open = open;
         if let Some(command) = selected {
-            self.state.execute(command);
+            match command {
+                Command::OpenFile => {
+                    let path = FileDialogBuilder::default()
+                        .set_location("~/Documents")
+                        .add_filter("Markdown", ["md", "markdown"])
+                        .open_single_file()
+                        .show()
+                        .unwrap_or(None);
+                    if let Some(path) = path {
+                        self.state.open_file(path);
+                    }
+                }
+                Command::SaveFile => {
+                    let _path = self.state.save_file();
+                    // Successfully saved
+                }
+                Command::SaveFileAs => {
+                    let path = FileDialogBuilder::default()
+                        .set_location("~/Documents")
+                        .add_filter("Markdown", ["md", "markdown"])
+                        .save_single_file()
+                        .show()
+                        .unwrap_or(None);
+                    if let Some(path) = path {
+                        self.state.save_file_as(path);
+                    }
+                }
+                Command::SwitchThemeLight => {
+                    self.state.theme = ThemeConfig::default_light();
+                    self.state.theme.apply_to(ctx);
+                }
+                Command::SwitchThemeDark => {
+                    self.state.theme = ThemeConfig::default_dark();
+                    self.state.theme.apply_to(ctx);
+                }
+                _ => {
+                    self.state.execute(command);
+                }
+            }
             self.state.command_palette_open = false;
             self.state.command_query.clear();
         }
