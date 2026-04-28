@@ -1,0 +1,19 @@
+[package]
+name = "velocimd"
+version = "0.1.0"
+edition = "2024"
+description = "A lightning-fast Markdown reader and editor written in Rust."
+license = "MIT"
+authors = ["Logan Hart"]
+
+[dependencies]
+anyhow = "1.0"
+dirs = "6.0"
+eframe = { version = "0.33", default-features = true }
+egui_extras = "0.33"
+pulldown-cmark = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
+
+[dev-dependencies]
+insta = "1.43"
