@@ -80,7 +80,7 @@ impl ThemeConfig {
         }
         ctx.set_visuals(visuals);
 
-        let mut style = (*ctx.style()).clone();
+        let mut style = (*ctx.global_style()).clone();
         let mut text_styles = BTreeMap::new();
         text_styles.insert(
             TextStyle::Heading,
@@ -103,7 +103,7 @@ impl ThemeConfig {
             FontId::proportional(self.preview_font_size - 2.0),
         );
         style.text_styles = text_styles;
-        ctx.set_style(style);
+        ctx.set_global_style(style);
     }
 }
 

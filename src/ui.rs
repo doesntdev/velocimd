@@ -1,11 +1,27 @@
-use crate::{
-    app_state::AppState, commands::Command, markdown, modes::EditorMode, theme::ThemeConfig,
-};
+use crate::{app_state::AppState, commands::Command, modes::EditorMode, theme::ThemeConfig};
 use eframe::{App, CreationContext, Frame, egui};
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use native_dialog::FileDialogBuilder;
+
+#[derive(Default)]
+pub struct PreviewRenderer {
+    cache: CommonMarkCache,
+}
+
+impl PreviewRenderer {
+    pub fn name(&self) -> &'static str {
+        "egui-commonmark"
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui, markdown: &str) {
+        ui.style_mut().url_in_tooltip = true;
+        CommonMarkViewer::new().show(ui, &mut self.cache, markdown);
+    }
+}
 
 pub struct VelocimdApp {
     state: AppState,
+    preview_renderer: PreviewRenderer,
     theme_applied: bool,
 }
 
@@ -15,6 +31,7 @@ impl VelocimdApp {
         state.theme.apply_to(&cc.egui_ctx);
         Self {
             state,
+            preview_renderer: PreviewRenderer::default(),
             theme_applied: true,
         }
     }
@@ -42,35 +59,34 @@ impl VelocimdApp {
         });
     }
 
-    fn top_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Velocimd");
-                ui.separator();
-                if ui.button("New tab").clicked() {
-                    self.state.execute(Command::NewTab);
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.heading("Velocimd");
+            ui.separator();
+            if ui.button("New tab").clicked() {
+                self.state.execute(Command::NewTab);
+            }
+            if ui.button("Command palette").clicked() {
+                self.state.execute(Command::TogglePalette);
+            }
+            ui.separator();
+            for mode in [EditorMode::Edit, EditorMode::Preview, EditorMode::Split] {
+                if ui
+                    .selectable_label(self.state.mode == mode, mode.label())
+                    .clicked()
+                {
+                    self.state.execute(Command::SetMode(mode));
                 }
-                if ui.button("Command palette").clicked() {
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!("Theme: {}", self.state.theme.name));
+                if ui.button("🌓").clicked() {
                     self.state.execute(Command::TogglePalette);
+                    self.state.command_query = "theme".to_string();
                 }
-                ui.separator();
-                for mode in [EditorMode::Edit, EditorMode::Preview, EditorMode::Split] {
-                    if ui
-                        .selectable_label(self.state.mode == mode, mode.label())
-                        .clicked()
-                    {
-                        self.state.execute(Command::SetMode(mode));
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format!("Theme: {}", self.state.theme.name));
-                    if ui.button("🌓").clicked() {
-                        self.state.execute(Command::TogglePalette);
-                        self.state.command_query = "theme".to_string();
-                    }
-                });
             });
         });
+        ui.separator();
     }
 
     fn tabs(&mut self, ui: &mut egui::Ui) {
@@ -115,38 +131,32 @@ impl VelocimdApp {
         }
     }
 
-    fn preview(&self, ui: &mut egui::Ui) {
+    fn preview(&mut self, ui: &mut egui::Ui) {
         let Some(document) = self.state.active_document() else {
             ui.label("No document open.");
             return;
         };
+        let content = document.content.clone();
 
-        let rendered = markdown::render_to_html(&document.content);
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(rendered)
-                    .text_style(egui::TextStyle::Monospace)
-                    .color(egui::Color32::from_rgb(230, 234, 244)),
-            );
+            self.preview_renderer.show(ui, &content);
         });
     }
 
-    fn workspace(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.tabs(ui);
-            match self.state.mode {
-                EditorMode::Edit => self.editor(ui),
-                EditorMode::Preview => self.preview(ui),
-                EditorMode::Split => {
-                    ui.columns(2, |columns| {
-                        columns[0].heading("Editor");
-                        self.editor(&mut columns[0]);
-                        columns[1].heading("Preview");
-                        self.preview(&mut columns[1]);
-                    });
-                }
+    fn workspace(&mut self, ui: &mut egui::Ui) {
+        self.tabs(ui);
+        match self.state.mode {
+            EditorMode::Edit => self.editor(ui),
+            EditorMode::Preview => self.preview(ui),
+            EditorMode::Split => {
+                ui.columns(2, |columns| {
+                    columns[0].heading("Editor");
+                    self.editor(&mut columns[0]);
+                    columns[1].heading("Preview");
+                    self.preview(&mut columns[1]);
+                });
             }
-        });
+        }
     }
 
     fn command_palette(&mut self, ctx: &egui::Context) {
@@ -231,14 +241,17 @@ impl VelocimdApp {
 }
 
 impl App for VelocimdApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut Frame) {
+        let ctx = ui.ctx().clone();
         if !self.theme_applied {
-            self.state.theme.apply_to(ctx);
+            self.state.theme.apply_to(&ctx);
             self.theme_applied = true;
         }
-        self.handle_shortcuts(ctx);
-        self.top_bar(ctx);
-        self.workspace(ctx);
-        self.command_palette(ctx);
+        self.handle_shortcuts(&ctx);
+        egui::Frame::central_panel(ui.style()).show(ui, |ui| {
+            self.top_bar(ui);
+            self.workspace(ui);
+        });
+        self.command_palette(&ctx);
     }
 }

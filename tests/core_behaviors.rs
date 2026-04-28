@@ -4,6 +4,7 @@ use std::{
 };
 use velocimd::{
     app_state::AppState, commands::Command, markdown, modes::EditorMode, theme::ThemeConfig,
+    ui::PreviewRenderer,
 };
 
 fn unique_temp_path(name: &str) -> std::path::PathBuf {
@@ -27,6 +28,11 @@ fn markdown_renderer_outputs_headings_and_emphasis() {
 
     assert!(html.contains("<h1>Velocimd</h1>"));
     assert!(html.contains("<strong>fast</strong>"));
+}
+
+#[test]
+fn preview_renderer_is_egui_native_not_raw_html_text() {
+    assert_eq!(PreviewRenderer::default().name(), "egui-commonmark");
 }
 
 #[test]
