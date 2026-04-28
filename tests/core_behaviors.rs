@@ -36,6 +36,14 @@ fn preview_renderer_is_egui_native_not_raw_html_text() {
 }
 
 #[test]
+fn preview_renderer_supports_code_highlighting_and_local_images() {
+    let renderer = PreviewRenderer::default();
+
+    assert!(renderer.supports_code_highlighting());
+    assert!(renderer.supports_local_images());
+}
+
+#[test]
 fn markdown_renderer_strips_obvious_script_tags() {
     let html = markdown::render_to_html("# Safe\n\n<script>alert('nope')</script>");
 

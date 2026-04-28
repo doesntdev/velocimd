@@ -13,6 +13,14 @@ impl PreviewRenderer {
         "egui-commonmark"
     }
 
+    pub fn supports_code_highlighting(&self) -> bool {
+        true
+    }
+
+    pub fn supports_local_images(&self) -> bool {
+        true
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, markdown: &str) {
         ui.style_mut().url_in_tooltip = true;
         CommonMarkViewer::new().show(ui, &mut self.cache, markdown);
