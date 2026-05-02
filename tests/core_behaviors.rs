@@ -95,6 +95,30 @@ fn markdown_renderer_strips_obvious_script_tags() {
 }
 
 #[test]
+fn markdown_renderer_strips_inline_html() {
+    let html = markdown::render_to_html(
+        r#"# Safe
+
+<img src=x onerror="alert('nope')">
+"#,
+    );
+
+    assert!(html.contains("<h1>Safe</h1>"));
+    assert!(!html.to_lowercase().contains("<img"));
+    assert!(!html.to_lowercase().contains("onerror"));
+}
+
+#[test]
+fn markdown_renderer_neutralizes_dangerous_urls() {
+    let html = markdown::render_to_html("[bad](javascript:alert(1)) ![bad](file:///etc/passwd)");
+
+    assert!(!html.to_lowercase().contains("javascript:"));
+    assert!(!html.to_lowercase().contains("file:///"));
+    assert!(html.contains("href=\"#\""));
+    assert!(html.contains("src=\"#\""));
+}
+
+#[test]
 fn theme_config_loads_from_toml() {
     let config = ThemeConfig::from_toml(
         r##"

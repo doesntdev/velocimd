@@ -3,8 +3,9 @@ name = "velocimd"
 version = "0.1.0"
 edition = "2024"
 description = "A lightning-fast Markdown reader and editor written in Rust."
-license = "MIT"
+license = "AGPL-3.0-only"
 authors = ["Logan Hart"]
+repository = "https://github.com/doesntdev/velocimd"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

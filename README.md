@@ -11,10 +11,6 @@ Initial product direction:
 - Rapid edit, preview, and split-view mode switching.
 - Easy app theme customization through TOML theme files.
 
-## Current status
-
-Fresh scaffold. The first implementation establishes the core state model, Markdown rendering, theme parsing, and a native `egui` shell.
-
 ## Development
 
 ```bash
@@ -32,3 +28,7 @@ cargo packager --release
 Release builds are also available through the GitHub Actions workflow in
 `.github/workflows/release.yml`. Push a `v*` tag or run the workflow manually to
 build Linux, macOS, and Windows packages.
+
+## License
+
+Velocimd is released under the GNU Affero General Public License v3.0 only.

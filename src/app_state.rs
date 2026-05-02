@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     pub documents: Vec<Document>,
@@ -124,10 +126,14 @@ impl PersistedDocument {
 
     fn into_document(self) -> Document {
         let fallback_content = self.scratch_content.or(self.content).unwrap_or_default();
-        let (content, dirty) = if let Some(path) = &self.path {
-            match fs::read_to_string(path) {
-                Ok(content) => (content, self.dirty),
-                Err(_) => (fallback_content, true),
+        let mut path = self.path;
+        let (content, dirty) = if let Some(document_path) = path.as_ref() {
+            match read_document_content(document_path) {
+                Some(content) => (content, self.dirty),
+                None => {
+                    path = None;
+                    (fallback_content, false)
+                }
             }
         } else {
             (fallback_content, self.dirty)
@@ -136,7 +142,7 @@ impl PersistedDocument {
         Document {
             id: self.id,
             title: self.title,
-            path: self.path,
+            path,
             content,
             dirty,
             revision: 0,
@@ -266,7 +272,7 @@ impl AppState {
             return true;
         }
 
-        let Ok(content) = fs::read_to_string(&path) else {
+        let Some(content) = read_document_content(&path) else {
             return false;
         };
 
@@ -582,7 +588,7 @@ fn unique_markdown_path_for_file_name(
     documents: &[Document],
     excluded_index: Option<usize>,
 ) -> PathBuf {
-    let (stem, extension) = split_stem_extension(&file_name);
+    let (stem, extension) = split_stem_extension(file_name);
 
     let mut suffix = 1;
     loop {
@@ -606,6 +612,15 @@ fn unique_markdown_path_for_file_name(
 
         suffix += 1;
     }
+}
+
+fn read_document_content(path: &Path) -> Option<String> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_DOCUMENT_BYTES {
+        return None;
+    }
+
+    fs::read_to_string(path).ok()
 }
 
 fn markdown_file_name(title: &str) -> String {
@@ -702,6 +717,63 @@ mod tests {
             persisted.documents[1].scratch_content.as_deref(),
             Some("# Scratch body")
         );
+    }
+
+    #[test]
+    fn persisted_state_drops_unreadable_file_path_without_dirtying_document() {
+        let missing_path = std::env::temp_dir().join(format!(
+            "velocimd-missing-{}-{}.md",
+            std::process::id(),
+            "persisted"
+        ));
+        let _ = fs::remove_file(&missing_path);
+        let persisted = PersistedDocument {
+            id: 1,
+            title: "Missing.md".to_string(),
+            path: Some(missing_path),
+            dirty: true,
+            scratch_content: None,
+            content: None,
+        };
+
+        let document = persisted.into_document();
+
+        assert!(document.path.is_none());
+        assert!(!document.dirty);
+        assert!(document.content.is_empty());
+    }
+
+    #[test]
+    fn open_file_rejects_directories() {
+        let folder = std::env::temp_dir().join(format!(
+            "velocimd-directory-{}-{}",
+            std::process::id(),
+            "open"
+        ));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).expect("temp directory should be created");
+        let mut state = AppState::fresh();
+
+        assert!(!state.open_file(folder.clone()));
+
+        let _ = fs::remove_dir_all(folder);
+    }
+
+    #[test]
+    fn open_file_rejects_oversized_documents() {
+        let path = std::env::temp_dir().join(format!(
+            "velocimd-large-{}-{}.md",
+            std::process::id(),
+            "open"
+        ));
+        let file = fs::File::create(&path).expect("large fixture should be created");
+        file.set_len(MAX_DOCUMENT_BYTES + 1)
+            .expect("large fixture should be sized");
+        let mut state = AppState::fresh();
+
+        assert!(!state.open_file(path.clone()));
+
+        let _ = fs::remove_file(path);
     }
 
     fn assert_unique_document_ids(documents: &[Document]) {

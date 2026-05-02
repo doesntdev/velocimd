@@ -122,6 +122,8 @@ impl ThemeConfig {
 
     pub fn apply_to(&self, ctx: &EguiContext) {
         let tokens = DesignTokens::from_theme(self);
+        let editor_font_size = safe_font_size(self.editor_font_size, default_editor_font_size());
+        let preview_font_size = safe_font_size(self.preview_font_size, default_preview_font_size());
         let mut visuals = if self.name.to_lowercase().contains("light") {
             Visuals::light()
         } else {
@@ -161,23 +163,14 @@ impl ThemeConfig {
         let mut text_styles = BTreeMap::new();
         text_styles.insert(
             TextStyle::Heading,
-            FontId::proportional(self.preview_font_size + 8.0),
+            FontId::proportional(preview_font_size + 8.0),
         );
-        text_styles.insert(
-            TextStyle::Body,
-            FontId::proportional(self.preview_font_size),
-        );
-        text_styles.insert(
-            TextStyle::Monospace,
-            FontId::monospace(self.editor_font_size),
-        );
-        text_styles.insert(
-            TextStyle::Button,
-            FontId::proportional(self.preview_font_size),
-        );
+        text_styles.insert(TextStyle::Body, FontId::proportional(preview_font_size));
+        text_styles.insert(TextStyle::Monospace, FontId::monospace(editor_font_size));
+        text_styles.insert(TextStyle::Button, FontId::proportional(preview_font_size));
         text_styles.insert(
             TextStyle::Small,
-            FontId::proportional(self.preview_font_size - 2.0),
+            FontId::proportional(preview_font_size - 2.0),
         );
         style.text_styles = text_styles;
         ctx.set_global_style(style);
@@ -207,4 +200,29 @@ fn parse_hex_color(value: &str) -> Option<Color32> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Color32::from_rgb(r, g, b))
+}
+
+fn safe_font_size(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(8.0, 40.0)
+    } else {
+        fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_font_size_rejects_non_finite_values() {
+        assert_eq!(safe_font_size(f32::NAN, 15.0), 15.0);
+        assert_eq!(safe_font_size(f32::INFINITY, 15.0), 15.0);
+    }
+
+    #[test]
+    fn safe_font_size_clamps_extreme_values() {
+        assert_eq!(safe_font_size(-20.0, 15.0), 8.0);
+        assert_eq!(safe_font_size(2000.0, 15.0), 40.0);
+    }
 }

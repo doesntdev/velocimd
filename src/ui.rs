@@ -175,12 +175,12 @@ fn show_preview_segments(
                     },
                 );
 
-                if let Some(target) = pending_sync {
-                    if line_in_segment(target.line, *start_line, *line_count) {
-                        let end_y = ui.cursor().top();
-                        scroll_preview_line(ui, target, *start_line, *line_count, start_y, end_y);
-                        pending_sync = None;
-                    }
+                if let Some(target) = pending_sync
+                    && line_in_segment(target.line, *start_line, *line_count)
+                {
+                    let end_y = ui.cursor().top();
+                    scroll_preview_line(ui, target, *start_line, *line_count, start_y, end_y);
+                    pending_sync = None;
                 }
             }
 
@@ -1281,7 +1281,7 @@ impl App for VelocimdApp {
 
 impl Drop for VelocimdApp {
     fn drop(&mut self) {
-        self.state.save_all_documents();
+        let _ = self.state.save_dirty_documents();
         let _ = self.state.save();
     }
 }
@@ -1295,21 +1295,21 @@ fn split_preview_segments(markdown: &str) -> Vec<PreviewSegment> {
     while line_index < lines.len() {
         let trimmed = lines[line_index].trim_start();
 
-        if let Some(fence) = mermaid_fence_marker(trimmed) {
-            if let Some(closing_line) = find_closing_fence(&lines, line_index + 1, fence) {
-                push_markdown_segments(&mut segments, &lines, markdown_start, line_index);
+        if let Some(fence) = mermaid_fence_marker(trimmed)
+            && let Some(closing_line) = find_closing_fence(&lines, line_index + 1, fence)
+        {
+            push_markdown_segments(&mut segments, &lines, markdown_start, line_index);
 
-                let source = lines[line_index + 1..closing_line].join("\n");
-                segments.push(PreviewSegment {
-                    start_line: line_index,
-                    line_count: closing_line - line_index + 1,
-                    kind: PreviewSegmentKind::Mermaid(source.trim().to_string()),
-                });
+            let source = lines[line_index + 1..closing_line].join("\n");
+            segments.push(PreviewSegment {
+                start_line: line_index,
+                line_count: closing_line - line_index + 1,
+                kind: PreviewSegmentKind::Mermaid(source.trim().to_string()),
+            });
 
-                line_index = closing_line + 1;
-                markdown_start = line_index;
-                continue;
-            }
+            line_index = closing_line + 1;
+            markdown_start = line_index;
+            continue;
         }
 
         line_index += 1;
