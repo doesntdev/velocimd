@@ -314,7 +314,14 @@ pub struct VelocimdApp {
 
 impl VelocimdApp {
     pub fn new(cc: &CreationContext<'_>) -> Self {
-        let state = AppState::new();
+        Self::new_with_files(cc, Vec::new())
+    }
+
+    pub fn new_with_files(cc: &CreationContext<'_>, files: Vec<PathBuf>) -> Self {
+        let mut state = AppState::new();
+        for path in files {
+            let _ = state.open_file(path);
+        }
         state.theme.apply_to(&cc.egui_ctx);
         Self {
             state,

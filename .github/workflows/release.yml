@@ -1,0 +1,79 @@
+name: Release Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            artifact-name: velocimd-linux
+          - name: macos
+            os: macos-latest
+            artifact-name: velocimd-macos
+          - name: windows
+            os: windows-latest
+            artifact-name: velocimd-windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            pkg-config
+
+      - name: Install Windows packaging dependencies
+        if: runner.os == 'Windows'
+        run: choco install nsis -y
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Package
+        run: cargo packager --release
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Attach artifacts to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

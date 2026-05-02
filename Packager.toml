@@ -1,0 +1,37 @@
+name = "velocimd"
+product-name = "Velocimd"
+identifier = "dev.velocimd.app"
+version = "0.1.0"
+description = "A lightning-fast Markdown reader and editor written in Rust."
+long-description = "Velocimd is a native Markdown editor with folder-based tabs, live preview, Mermaid rendering, streaming saves, and a focused keyboard-driven interface."
+authors = ["Logan Hart"]
+publisher = "Velocimd"
+category = "Productivity"
+out-dir = "dist"
+binaries-dir = "target/release"
+before-packaging-command = "cargo build --release"
+icons = [
+    "assets/icons/velocimd.svg",
+    "assets/icons/velocimd.png",
+    "assets/icons/velocimd.ico",
+    "assets/icons/velocimd.icns",
+    "assets/icons/png/*.png",
+]
+
+[[binaries]]
+path = "velocimd"
+main = true
+
+[[file-associations]]
+name = "Markdown"
+description = "Markdown document"
+extensions = ["md", "markdown"]
+mime-type = "text/markdown"
+role = "editor"
+
+[linux]
+generate-desktop-entry = true
+
+[deb]
+section = "editors"
+priority = "optional"

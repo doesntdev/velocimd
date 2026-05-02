@@ -21,3 +21,14 @@ Fresh scaffold. The first implementation establishes the core state model, Markd
 cargo test
 cargo run
 ```
+
+## Packaging
+
+```bash
+cargo install cargo-packager --locked
+cargo packager --release
+```
+
+Release builds are also available through the GitHub Actions workflow in
+`.github/workflows/release.yml`. Push a `v*` tag or run the workflow manually to
+build Linux, macOS, and Windows packages.

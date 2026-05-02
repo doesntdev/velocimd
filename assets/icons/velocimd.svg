@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Velocimd logo</title>
+  <desc id="desc">A dark rounded square icon with a cyan double chevron and md lettering.</desc>
+  <rect width="256" height="256" rx="48" fill="#11131b"/>
+  <rect x="13" y="13" width="230" height="230" rx="39" fill="none" stroke="#2a2f3b" stroke-width="4"/>
+  <path d="M47 78L91 128L47 178" fill="none" stroke="#5ed8ff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M88 78L132 128L88 178" fill="none" stroke="#5ed8ff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M146 172V100H164L183 128L202 100H220V172H202V128L183 154L164 128V172H146Z" fill="#f4f7fb"/>
+  <path d="M214 172V84H232V172H214Z" fill="#f4f7fb"/>
+  <path d="M181 172C170 172 161 169 154 162C147 155 144 146 144 135C144 124 147 115 154 108C161 101 170 98 181 98H214V116H183C176 116 171 118 167 121C163 124 161 129 161 135C161 141 163 146 167 149C171 152 176 154 183 154H214V172H181Z" fill="#f4f7fb"/>
+</svg>
