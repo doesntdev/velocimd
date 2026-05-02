@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -11,6 +12,8 @@ pub struct Document {
     pub path: Option<PathBuf>,
     pub content: String,
     pub dirty: bool,
+    #[serde(default)]
+    pub revision: u64,
 }
 
 impl Document {
@@ -21,6 +24,7 @@ impl Document {
             path: None,
             content: content.into(),
             dirty: false,
+            revision: 0,
         }
     }
 
@@ -37,25 +41,74 @@ impl Document {
             path: Some(path),
             content: content.into(),
             dirty: false,
+            revision: 0,
         }
     }
 
     pub fn set_content(&mut self, content: String) {
         if self.content != content {
             self.content = content;
-            self.dirty = true;
+            self.mark_changed();
         }
     }
 
+    pub fn mark_changed(&mut self) {
+        self.dirty = true;
+        self.revision = self.revision.saturating_add(1);
+    }
+
     pub fn display_title(&self) -> String {
+        let title = self.visible_title();
         if self.dirty {
-            format!("{} •", self.title)
+            format!("{title} •")
         } else {
-            self.title.clone()
+            title
         }
+    }
+
+    pub fn visible_title(&self) -> String {
+        strip_markdown_extension(&self.title).to_string()
+    }
+
+    pub(crate) fn repair_ids(documents: &mut [Self]) {
+        let mut seen = HashSet::new();
+        let mut max_id = documents
+            .iter()
+            .map(|document| document.id)
+            .max()
+            .unwrap_or(0);
+
+        for document in documents {
+            if document.id == 0 || seen.contains(&document.id) {
+                max_id = max_id.saturating_add(1);
+                document.id = max_id;
+            }
+
+            seen.insert(document.id);
+            max_id = max_id.max(document.id);
+        }
+
+        advance_next_id_to(max_id.saturating_add(1));
     }
 }
 
 fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn advance_next_id_to(next: u64) {
+    let mut current = NEXT_ID.load(Ordering::Relaxed);
+    while current < next {
+        match NEXT_ID.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+fn strip_markdown_extension(title: &str) -> &str {
+    title
+        .strip_suffix(".markdown")
+        .or_else(|| title.strip_suffix(".md"))
+        .unwrap_or(title)
 }

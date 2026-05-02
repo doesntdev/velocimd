@@ -3,6 +3,7 @@ use crate::modes::EditorMode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     NewTab,
+    SelectWorkingFolder,
     OpenFile,
     SaveFile,
     SaveFileAs,
@@ -17,7 +18,8 @@ pub enum Command {
 impl Command {
     pub fn label(self) -> &'static str {
         match self {
-            Self::NewTab => "New tab",
+            Self::NewTab => "New Markdown file",
+            Self::SelectWorkingFolder => "Select working folder...",
             Self::OpenFile => "Open file...",
             Self::SaveFile => "Save file",
             Self::SaveFileAs => "Save file as...",
@@ -35,6 +37,7 @@ impl Command {
     pub fn shortcut(self) -> &'static str {
         match self {
             Self::NewTab => "Ctrl+N",
+            Self::SelectWorkingFolder => "Ctrl+Shift+O",
             Self::OpenFile => "Ctrl+O",
             Self::SaveFile => "Ctrl+S",
             Self::SaveFileAs => "Ctrl+Shift+S",
@@ -49,9 +52,28 @@ impl Command {
         }
     }
 
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::NewTab => "+",
+            Self::SelectWorkingFolder => "[F]",
+            Self::OpenFile => "[O]",
+            Self::SaveFile => "[S]",
+            Self::SaveFileAs => "[S+]",
+            Self::CloseTab => "x",
+            Self::TogglePalette => "[?]",
+            Self::SetMode(EditorMode::Edit) => "[E]",
+            Self::SetMode(EditorMode::Preview) => "[P]",
+            Self::SetMode(EditorMode::Split) => "[/]",
+            Self::CycleMode => "[>]",
+            Self::SwitchThemeLight => "[L]",
+            Self::SwitchThemeDark => "[D]",
+        }
+    }
+
     pub fn all() -> &'static [Command] {
         &[
             Self::NewTab,
+            Self::SelectWorkingFolder,
             Self::OpenFile,
             Self::SaveFile,
             Self::SaveFileAs,
@@ -61,6 +83,23 @@ impl Command {
             Self::SetMode(EditorMode::Split),
             Self::CycleMode,
             Self::TogglePalette,
+            Self::SwitchThemeLight,
+            Self::SwitchThemeDark,
+        ]
+    }
+
+    pub fn toolbar() -> &'static [Command] {
+        &[
+            Self::NewTab,
+            Self::SelectWorkingFolder,
+            Self::OpenFile,
+            Self::SaveFile,
+            Self::SaveFileAs,
+            Self::CloseTab,
+            Self::SetMode(EditorMode::Edit),
+            Self::SetMode(EditorMode::Preview),
+            Self::SetMode(EditorMode::Split),
+            Self::CycleMode,
             Self::SwitchThemeLight,
             Self::SwitchThemeDark,
         ]

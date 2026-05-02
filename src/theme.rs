@@ -1,7 +1,69 @@
 use anyhow::Result;
-use eframe::egui::{Color32, Context as EguiContext, FontId, TextStyle, Visuals};
+use eframe::egui::{
+    Color32, Context as EguiContext, FontId, Stroke, TextStyle, Visuals, style::ScrollStyle,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, path::Path};
+
+#[derive(Debug, Clone, Copy)]
+pub struct DesignTokens {
+    pub app_bg: Color32,
+    pub chrome_bg: Color32,
+    pub panel_bg: Color32,
+    pub panel_bg_active: Color32,
+    pub hover_bg: Color32,
+    pub border: Color32,
+    pub border_active: Color32,
+    pub text: Color32,
+    pub text_muted: Color32,
+    pub accent: Color32,
+    pub success: Color32,
+    pub danger: Color32,
+}
+
+impl DesignTokens {
+    pub fn from_theme(theme: &ThemeConfig) -> Self {
+        if theme.name.to_lowercase().contains("light") {
+            Self::zed_light()
+        } else {
+            Self::zed_dark()
+        }
+    }
+
+    pub fn zed_dark() -> Self {
+        Self {
+            app_bg: Color32::from_rgb(13, 15, 21),
+            chrome_bg: Color32::from_rgb(18, 20, 27),
+            panel_bg: Color32::from_rgb(22, 24, 32),
+            panel_bg_active: Color32::from_rgb(30, 33, 43),
+            hover_bg: Color32::from_rgb(36, 39, 51),
+            border: Color32::from_rgb(48, 52, 67),
+            border_active: Color32::from_rgb(86, 113, 173),
+            text: Color32::from_rgb(221, 225, 234),
+            text_muted: Color32::from_rgb(143, 151, 166),
+            accent: Color32::from_rgb(122, 162, 255),
+            success: Color32::from_rgb(113, 184, 138),
+            danger: Color32::from_rgb(235, 111, 146),
+        }
+    }
+
+    pub fn zed_light() -> Self {
+        Self {
+            app_bg: Color32::from_rgb(244, 245, 247),
+            chrome_bg: Color32::from_rgb(235, 237, 242),
+            panel_bg: Color32::from_rgb(250, 250, 252),
+            panel_bg_active: Color32::from_rgb(255, 255, 255),
+            hover_bg: Color32::from_rgb(226, 231, 241),
+            border: Color32::from_rgb(205, 211, 224),
+            border_active: Color32::from_rgb(66, 107, 184),
+            text: Color32::from_rgb(28, 32, 40),
+            text_muted: Color32::from_rgb(98, 107, 124),
+            accent: Color32::from_rgb(44, 99, 194),
+            success: Color32::from_rgb(40, 138, 82),
+            danger: Color32::from_rgb(190, 66, 87),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeConfig {
@@ -38,9 +100,9 @@ impl ThemeConfig {
 
     pub fn default_dark() -> Self {
         Self {
-            name: "VelociDark".to_string(),
-            background: "#10131a".to_string(),
-            foreground: "#f7f7ff".to_string(),
+            name: "Velocidark".to_string(),
+            background: "#0d0f15".to_string(),
+            foreground: "#dde1ea".to_string(),
             accent: "#7aa2ff".to_string(),
             editor_font_size: default_editor_font_size(),
             preview_font_size: default_preview_font_size(),
@@ -49,38 +111,53 @@ impl ThemeConfig {
 
     pub fn default_light() -> Self {
         Self {
-            name: "VelociLight".to_string(),
-            background: "#fdfdfd".to_string(),
-            foreground: "#10131a".to_string(),
-            accent: "#1e90ff".to_string(),
+            name: "Velocilight".to_string(),
+            background: "#f4f5f7".to_string(),
+            foreground: "#1c2028".to_string(),
+            accent: "#2c63c2".to_string(),
             editor_font_size: default_editor_font_size(),
             preview_font_size: default_preview_font_size(),
         }
     }
 
     pub fn apply_to(&self, ctx: &EguiContext) {
+        let tokens = DesignTokens::from_theme(self);
         let mut visuals = if self.name.to_lowercase().contains("light") {
             Visuals::light()
         } else {
             Visuals::dark()
         };
 
-        if let Some(bg) = parse_hex_color(&self.background) {
-            visuals.panel_fill = bg;
-            visuals.window_fill = bg;
-            visuals.extreme_bg_color = bg;
-        }
-        if let Some(fg) = parse_hex_color(&self.foreground) {
-            visuals.override_text_color = Some(fg);
-        }
-        if let Some(accent) = parse_hex_color(&self.accent) {
-            visuals.selection.bg_fill = accent;
-            visuals.hyperlink_color = accent;
-            visuals.widgets.active.bg_fill = accent;
-        }
+        let bg = parse_hex_color(&self.background).unwrap_or(tokens.app_bg);
+        let fg = parse_hex_color(&self.foreground).unwrap_or(tokens.text);
+        let accent = parse_hex_color(&self.accent).unwrap_or(tokens.accent);
+
+        visuals.panel_fill = bg;
+        visuals.window_fill = tokens.panel_bg;
+        visuals.extreme_bg_color = bg;
+        visuals.faint_bg_color = tokens.chrome_bg;
+        visuals.override_text_color = Some(fg);
+        visuals.selection.bg_fill = accent.gamma_multiply(0.32);
+        visuals.selection.stroke = Stroke::new(1.0, accent);
+        visuals.hyperlink_color = accent;
+        visuals.widgets.noninteractive.bg_fill = tokens.panel_bg;
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, tokens.border);
+        visuals.widgets.inactive.bg_fill = tokens.panel_bg;
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, tokens.border);
+        visuals.widgets.hovered.bg_fill = tokens.hover_bg;
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, tokens.border_active);
+        visuals.widgets.active.bg_fill = tokens.panel_bg_active;
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent);
         ctx.set_visuals(visuals);
 
         let mut style = (*ctx.global_style()).clone();
+        style.spacing.item_spacing = eframe::egui::vec2(6.0, 5.0);
+        style.spacing.button_padding = eframe::egui::vec2(7.0, 4.0);
+        style.spacing.window_margin = eframe::egui::Margin::same(10);
+        style.spacing.scroll = ScrollStyle {
+            floating: true,
+            ..style.spacing.scroll
+        };
         let mut text_styles = BTreeMap::new();
         text_styles.insert(
             TextStyle::Heading,
