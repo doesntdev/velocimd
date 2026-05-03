@@ -1,7 +1,7 @@
 name = "velocimd"
 product-name = "Velocimd"
 identifier = "dev.velocimd.app"
-version = "0.1.0"
+version = "0.1.1"
 description = "A lightning-fast Markdown reader and editor written in Rust."
 long-description = "Velocimd is a native Markdown editor with folder-based tabs, live preview, Mermaid rendering, streaming saves, and a focused keyboard-driven interface."
 authors = ["Logan Hart"]
