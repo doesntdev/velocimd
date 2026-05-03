@@ -1,5 +1,6 @@
 use std::{
     fs,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 use velocimd::{
@@ -25,6 +26,10 @@ fn unique_temp_dir(name: &str) -> std::path::PathBuf {
     let path = unique_temp_path(name);
     fs::create_dir_all(&path).expect("temp dir should be created");
     path
+}
+
+fn canonical_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[test]
@@ -173,6 +178,7 @@ fn invalid_theme_missing_name_fails_fast() {
 fn app_state_opens_markdown_file_as_clean_active_tab() {
     let path = unique_temp_path("opened.md");
     fs::write(&path, "# Opened\n\nBody").expect("fixture should write");
+    let expected_path = canonical_path(&path);
 
     let mut state = AppState::fresh();
     assert!(state.open_file(path.clone()));
@@ -184,7 +190,7 @@ fn app_state_opens_markdown_file_as_clean_active_tab() {
         document.title,
         path.file_name().and_then(|name| name.to_str()).unwrap()
     );
-    assert_eq!(document.path.as_ref(), Some(&path));
+    assert_eq!(document.path.as_ref(), Some(&expected_path));
     assert_eq!(document.content, "# Opened\n\nBody");
     assert!(!document.dirty);
 
@@ -204,12 +210,13 @@ fn save_file_as_updates_current_document_without_switching_tabs() {
         .set_content("# Saved\n".to_string());
 
     assert!(state.save_file_as(path.clone()));
+    let expected_path = canonical_path(&path);
 
     let document = state
         .active_document()
         .expect("saved document should remain active");
     assert_eq!(state.active_document, 1);
-    assert_eq!(document.path.as_ref(), Some(&path));
+    assert_eq!(document.path.as_ref(), Some(&expected_path));
     assert_eq!(
         document.title,
         path.file_name().and_then(|name| name.to_str()).unwrap()
@@ -236,11 +243,12 @@ fn close_tab_keeps_at_least_one_document() {
 #[test]
 fn working_folder_assigns_default_path_and_streams_new_tab() {
     let folder = unique_temp_dir("working-folder");
+    let expected_folder = canonical_path(&folder);
     let mut state = AppState::fresh();
 
     assert!(state.set_working_folder(folder.clone()));
     assert_eq!(state.folder_tabs.len(), 1);
-    assert_eq!(state.folder_tabs[0].path, folder);
+    assert_eq!(state.folder_tabs[0].path, expected_folder);
     state.new_tab();
 
     let document = state
@@ -252,7 +260,7 @@ fn working_folder_assigns_default_path_and_streams_new_tab() {
         .stream_active_document()
         .expect("active document should stream to disk");
 
-    assert!(path.starts_with(&folder));
+    assert!(path.starts_with(&expected_folder));
     assert_eq!(
         fs::read_to_string(&path).expect("streamed document should exist"),
         "# Streaming\n\nSaved as typing happens.\n"
@@ -266,6 +274,7 @@ fn working_folder_assigns_default_path_and_streams_new_tab() {
 fn folder_tabs_deduplicate_and_drive_default_save_location() {
     let first_folder = unique_temp_dir("folder-tab-first");
     let second_folder = unique_temp_dir("folder-tab-second");
+    let expected_first_folder = canonical_path(&first_folder);
     let mut state = AppState::fresh();
 
     assert!(state.add_folder_tab(first_folder.clone()));
@@ -277,14 +286,14 @@ fn folder_tabs_deduplicate_and_drive_default_save_location() {
         state
             .active_folder_path()
             .expect("active folder should exist"),
-        first_folder.as_path()
+        expected_first_folder.as_path()
     );
 
     let path = state
         .save_file()
         .expect("pathless document should save into active folder tab");
 
-    assert!(path.starts_with(&first_folder));
+    assert!(path.starts_with(&expected_first_folder));
 
     let _ = fs::remove_dir_all(first_folder);
     let _ = fs::remove_dir_all(second_folder);
@@ -295,6 +304,7 @@ fn opening_same_markdown_file_switches_to_existing_document() {
     let folder = unique_temp_dir("open-existing-document");
     let path = folder.join("Note.md");
     fs::write(&path, "# Note\n").expect("fixture should write");
+    let expected_folder = canonical_path(&folder);
 
     let mut state = AppState::fresh();
     assert!(state.open_file(path.clone()));
@@ -307,7 +317,10 @@ fn opening_same_markdown_file_switches_to_existing_document() {
     assert_eq!(state.documents.len(), document_count);
     assert_eq!(state.active_document, opened_index);
     assert_eq!(state.folder_tabs.len(), 1);
-    assert_eq!(state.active_folder_path().unwrap(), folder.as_path());
+    assert_eq!(
+        state.active_folder_path().unwrap(),
+        expected_folder.as_path()
+    );
 
     let _ = fs::remove_dir_all(folder);
 }
@@ -352,6 +365,7 @@ fn rename_document_updates_file_name_with_markdown_extension() {
     let folder = unique_temp_dir("rename-document");
     let old_path = folder.join("Old.md");
     fs::write(&old_path, "# Old\n").expect("fixture should write");
+    let expected_new_path = canonical_path(&folder).join("New notes.md");
 
     let mut state = AppState::fresh();
     assert!(state.open_file(old_path.clone()));
@@ -360,7 +374,7 @@ fn rename_document_updates_file_name_with_markdown_extension() {
         .rename_document(state.active_document, "New notes")
         .expect("rename should update file path");
 
-    assert_eq!(new_path, folder.join("New notes.md"));
+    assert_eq!(new_path, expected_new_path);
     assert!(!old_path.exists());
     assert_eq!(
         fs::read_to_string(&new_path).expect("renamed file should exist"),
