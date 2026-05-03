@@ -120,6 +120,86 @@ impl ThemeConfig {
         }
     }
 
+    pub fn to_css(&self) -> String {
+        let tokens = DesignTokens::from_theme(self);
+        let bg = parse_hex_color(&self.background).unwrap_or(tokens.app_bg);
+        let fg = parse_hex_color(&self.foreground).unwrap_or(tokens.text);
+        let accent = parse_hex_color(&self.accent).unwrap_or(tokens.accent);
+        let bg_str = format_color(bg);
+        let fg_str = format_color(fg);
+        let accent_str = format_color(accent);
+        let panel_bg = format_color(tokens.panel_bg);
+        let chrome_bg = format_color(tokens.chrome_bg);
+        let border = format_color(tokens.border);
+        let muted = format_color(tokens.text_muted);
+        let preview_size = safe_font_size(self.preview_font_size, default_preview_font_size());
+        let editor_size = safe_font_size(self.editor_font_size, default_editor_font_size());
+        format!(
+            r#":root {{
+  --vd-bg: {bg_str};
+  --vd-fg: {fg_str};
+  --vd-accent: {accent_str};
+  --vd-panel-bg: {panel_bg};
+  --vd-chrome-bg: {chrome_bg};
+  --vd-border: {border};
+  --vd-muted: {muted};
+  --vd-preview-size: {preview_size}px;
+  --vd-editor-size: {editor_size}px;
+}}
+* {{ box-sizing: border-box; }}
+body {{
+  background: var(--vd-bg);
+  color: var(--vd-fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: var(--vd-preview-size);
+  line-height: 1.6;
+  margin: 0 auto;
+  padding: 2rem;
+  max-width: 56rem;
+}}
+h1, h2, h3, h4, h5, h6 {{
+  color: var(--vd-fg);
+  border-bottom: 1px solid var(--vd-border);
+  padding-bottom: 0.25em;
+  margin-top: 1.5em;
+}}
+h1 {{ font-size: 2em; }}
+h2 {{ font-size: 1.5em; }}
+h3 {{ font-size: 1.25em; }}
+a {{ color: var(--vd-accent); text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+code {{
+  background: var(--vd-chrome-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--vd-editor-size);
+}}
+pre {{
+  background: var(--vd-chrome-bg);
+  padding: 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--vd-border);
+}}
+pre code {{ background: transparent; padding: 0; }}
+blockquote {{
+  border-left: 4px solid var(--vd-accent);
+  margin: 1em 0;
+  padding-left: 1em;
+  color: var(--vd-muted);
+}}
+table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
+th, td {{ border: 1px solid var(--vd-border); padding: 0.5em 0.75em; text-align: left; }}
+th {{ background: var(--vd-chrome-bg); }}
+hr {{ border: none; border-top: 1px solid var(--vd-border); margin: 2em 0; }}
+img {{ max-width: 100%; height: auto; }}
+ul, ol {{ padding-left: 1.5em; }}
+.mermaid {{ background: var(--vd-panel-bg); padding: 1em; border-radius: 6px; }}
+"#
+        )
+    }
+
     pub fn apply_to(&self, ctx: &EguiContext) {
         let tokens = DesignTokens::from_theme(self);
         let editor_font_size = safe_font_size(self.editor_font_size, default_editor_font_size());
@@ -189,6 +269,10 @@ fn default_editor_font_size() -> f32 {
 
 fn default_preview_font_size() -> f32 {
     16.0
+}
+
+fn format_color(color: Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", color.r(), color.g(), color.b())
 }
 
 fn parse_hex_color(value: &str) -> Option<Color32> {
