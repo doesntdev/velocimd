@@ -27,7 +27,7 @@ pub struct WebHandle {
 impl WebHandle {
     #[wasm_bindgen(constructor)]
     pub fn new() -> WebHandle {
-        eframe::WebLogger::init(egui::util::web::log::LevelFilter::Debug).ok();
+        eframe::WebLogger::init(log::LevelFilter::Debug).ok();
         WebHandle {
             runner: WebRunner::new(),
         }
@@ -39,10 +39,10 @@ impl WebHandle {
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|cc| Ok(Box::new(velocimd::ui::VelocimdApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(crate::ui::VelocimdApp::new(cc)))),
             )
             .await
-            .map_err(|e| JsValue::from_str(&format!("Failed: {}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("Failed: {e:?}")))?;
         Ok(())
     }
 }

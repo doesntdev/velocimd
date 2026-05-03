@@ -3,12 +3,26 @@
   <head>
     <meta charset="utf-8">
     <title>Velocimd</title>
+    <style>
+      html,
+      body,
+      canvas {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+    </style>
   </head>
   <body>
+    <canvas id="velocimd-canvas"></canvas>
     <script type="module">
-      import('/velocimd.js').then(module => {
-        module.start();
-      });
+      import init, { WebHandle } from '/velocimd.js';
+
+      await init();
+      const canvas = document.getElementById('velocimd-canvas');
+      const handle = new WebHandle();
+      window.velocimd = handle;
+      await handle.start(canvas);
     </script>
   </body>
 </html>

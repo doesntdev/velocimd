@@ -1495,6 +1495,7 @@ fn line_for_char_index(text: &str, char_index: usize) -> usize {
     line
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn dialog_location(state: &AppState) -> PathBuf {
     state
         .working_folder
@@ -1504,6 +1505,7 @@ fn dialog_location(state: &AppState) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn with_markdown_extension(mut path: PathBuf) -> PathBuf {
     if path.extension().is_none() {
         path.set_extension("md");
