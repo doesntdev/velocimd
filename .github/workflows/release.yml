@@ -61,7 +61,12 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Package macOS universal
+        if: runner.os == 'macOS'
+        run: scripts/package-macos-universal.sh
+
       - name: Package
+        if: runner.os != 'macOS'
         run: cargo packager --release
 
       - name: Upload package artifacts

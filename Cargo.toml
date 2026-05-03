@@ -6,6 +6,7 @@ description = "A lightning-fast Markdown reader and editor written in Rust."
 license = "AGPL-3.0-only"
 authors = ["Logan Hart"]
 repository = "https://github.com/doesntdev/velocimd"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -36,6 +37,9 @@ console_error_panic_hook = "0.1"
 
 [dev-dependencies]
 insta = "1.43"
+
+[build-dependencies]
+winresource = "0.1.31"
 
 [dependencies.eframe]
 version = "0.34"

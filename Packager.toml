@@ -35,3 +35,6 @@ generate-desktop-entry = true
 [deb]
 section = "editors"
 priority = "optional"
+
+[nsis]
+installer-icon = "assets/icons/velocimd.ico"

@@ -17,7 +17,7 @@ small command surface that stays out of the way.
 - Line-numbered editor with synchronized preview positioning.
 - Native preview rendering with code highlighting, local images, and Mermaid
   flowchart support.
-- Zed-inspired dark and light themes: `Velocidark` and `Velocilight`.
+- Dark and light themes: `Velocidark` and `Velocilight`.
 - Icon command bar with hover tooltips and keyboard shortcuts.
 - Local app state persistence for open documents, recent files, folders, and
   theme selection.
@@ -28,10 +28,52 @@ Velocimd is early public software. It is usable for local Markdown editing, but
 the file model, packaging, and preview behavior are still expected to evolve.
 Use normal version-control habits for important notes.
 
-## Install
+## Quickstart
 
-Prebuilt packages are produced by the release workflow when a `v*` tag is pushed.
-Until release artifacts are published, build from source:
+Download the latest packages from
+[GitHub Releases](https://github.com/doesntdev/velocimd/releases/latest).
+
+### macOS
+
+Velocimd is not currently Developer ID signed or notarized. The command-line
+installer downloads the latest DMG, verifies the GitHub release checksum,
+installs `Velocimd.app` to `~/Applications`, and removes quarantine metadata:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doesntdev/velocimd/main/scripts/install-macos.sh | bash
+```
+
+To install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doesntdev/velocimd/main/scripts/install-macos.sh | VELOCIMD_INSTALL_DIR=/Applications bash
+```
+
+### Linux
+
+Debian and Ubuntu users can download the `.deb` package from the latest release,
+then install it with:
+
+```bash
+sudo apt install ./velocimd_*_amd64.deb
+```
+
+For other distributions, download the AppImage, make it executable, and run it:
+
+```bash
+chmod +x velocimd_*_x86_64.AppImage
+./velocimd_*_x86_64.AppImage
+```
+
+### Windows
+
+Download `velocimd_*_x64-setup.exe` from the latest release and run the
+installer. Windows may show a SmartScreen warning while the installer is
+unsigned.
+
+### From Source
+
+Install Rust stable, then run:
 
 ```bash
 git clone https://github.com/doesntdev/velocimd.git
