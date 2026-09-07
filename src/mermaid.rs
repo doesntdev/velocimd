@@ -201,7 +201,7 @@ pub fn render_mermaid(ui: &mut Ui, source: &str, tokens: DesignTokens) {
 fn render_parse_error(ui: &mut Ui, tokens: DesignTokens) {
     egui::Frame::new()
         .fill(tokens.panel_bg)
-        .stroke(Stroke::new(1.0, tokens.border))
+        .stroke(Stroke::new(1.0_f32, tokens.border))
         .corner_radius(6)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -222,7 +222,12 @@ fn paint_diagram(
     let (rect, _) = ui.allocate_exact_size(layout.canvas_size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 6, tokens.panel_bg_active);
-    painter.rect_stroke(rect, 6, Stroke::new(1.0, tokens.border), StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        6,
+        Stroke::new(1.0_f32, tokens.border),
+        StrokeKind::Inside,
+    );
 
     for edge in &diagram.edges {
         let Some(from) = layout.node_rects.get(&edge.from) else {
@@ -339,7 +344,7 @@ fn paint_node(
     tokens: DesignTokens,
 ) {
     let rect = rect.translate(offset);
-    let stroke = Stroke::new(1.2, tokens.border_active);
+    let stroke = Stroke::new(1.2_f32, tokens.border_active);
     match node.shape {
         NodeShape::Diamond => {
             let points = [
@@ -408,7 +413,7 @@ fn paint_edge(
         )
     };
 
-    let stroke = Stroke::new(1.2, tokens.text_muted);
+    let stroke = Stroke::new(1.2_f32, tokens.text_muted);
     painter.line_segment([start, end], stroke);
     paint_arrow_head(painter, start, end, stroke);
 

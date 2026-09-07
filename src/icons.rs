@@ -79,7 +79,7 @@ fn icon_button_sized(
         painter.rect_stroke(
             rect.shrink(1.0),
             5,
-            Stroke::new(1.0, stroke_color),
+            Stroke::new(1.0_f32, stroke_color),
             StrokeKind::Inside,
         );
         paint_icon(
@@ -98,7 +98,7 @@ fn icon_button_sized(
 }
 
 pub fn paint_logo(painter: &egui::Painter, rect: Rect, accent: Color32, text: Color32) {
-    let stroke = Stroke::new(1.8, accent);
+    let stroke = Stroke::new(1.8_f32, accent);
     let left = rect.left();
     let center_y = rect.center().y;
     let chevron_w = 8.0;
@@ -132,7 +132,7 @@ pub fn paint_logo(painter: &egui::Painter, rect: Rect, accent: Color32, text: Co
 }
 
 pub fn paint_icon(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
-    let stroke = Stroke::new(1.65, color);
+    let stroke = Stroke::new(1.65_f32, color);
     let center = rect.center();
     let left = rect.left();
     let right = rect.right();

@@ -146,7 +146,7 @@ fn show_preview_segments(
 
     egui::Frame::new()
         .fill(ui.visuals().widgets.noninteractive.bg_fill)
-        .stroke(egui::Stroke::new(1.0, tokens.border))
+        .stroke(egui::Stroke::new(1.0_f32, tokens.border))
         .corner_radius(6)
         .inner_margin(margin)
         .show(ui, |ui| {
@@ -370,7 +370,7 @@ impl VelocimdApp {
             ui.add_space(ui.available_height() * 0.35);
             egui::Frame::new()
                 .fill(tokens.panel_bg)
-                .stroke(egui::Stroke::new(1.0, tokens.border))
+                .stroke(egui::Stroke::new(1.0_f32, tokens.border))
                 .corner_radius(8)
                 .inner_margin(egui::Margin::same(18))
                 .show(ui, |ui| {
@@ -631,7 +631,7 @@ impl VelocimdApp {
                     tokens.text_muted
                 }))
                 .fill(fill)
-                .stroke(egui::Stroke::new(1.0, stroke))
+                .stroke(egui::Stroke::new(1.0_f32, stroke))
                 .corner_radius(6)
                 .min_size(egui::vec2(132.0, HEADER_CONTROL_HEIGHT));
 
@@ -851,7 +851,7 @@ impl VelocimdApp {
         painter.rect_stroke(
             outer_rect,
             6,
-            egui::Stroke::new(1.0, tokens.border),
+            egui::Stroke::new(1.0_f32, tokens.border),
             egui::StrokeKind::Inside,
         );
 
@@ -864,7 +864,7 @@ impl VelocimdApp {
         painter.vline(
             separator_x,
             outer_rect.y_range(),
-            egui::Stroke::new(1.0, tokens.border),
+            egui::Stroke::new(1.0_f32, tokens.border),
         );
 
         let text_rect = egui::Rect::from_min_max(

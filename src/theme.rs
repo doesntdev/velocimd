@@ -140,16 +140,16 @@ impl ThemeConfig {
         visuals.faint_bg_color = tokens.chrome_bg;
         visuals.override_text_color = Some(fg);
         visuals.selection.bg_fill = accent.gamma_multiply(0.32);
-        visuals.selection.stroke = Stroke::new(1.0, accent);
+        visuals.selection.stroke = Stroke::new(1.0_f32, accent);
         visuals.hyperlink_color = accent;
         visuals.widgets.noninteractive.bg_fill = tokens.panel_bg;
-        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, tokens.border);
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, tokens.border);
         visuals.widgets.inactive.bg_fill = tokens.panel_bg;
-        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, tokens.border);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, tokens.border);
         visuals.widgets.hovered.bg_fill = tokens.hover_bg;
-        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, tokens.border_active);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, tokens.border_active);
         visuals.widgets.active.bg_fill = tokens.panel_bg_active;
-        visuals.widgets.active.bg_stroke = Stroke::new(1.0, accent);
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, accent);
         ctx.set_visuals(visuals);
 
         let mut style = (*ctx.global_style()).clone();
