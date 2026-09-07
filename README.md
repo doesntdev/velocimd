@@ -13,7 +13,8 @@ small command surface that stays out of the way.
   child folders available from the tab menu.
 - Markdown-only workflow with `.md` extensions hidden in the UI where possible.
 - Split, editor-only, and preview-only modes.
-- Streaming autosave for dirty documents.
+- Debounced autosave with staged file replacement and failed-save draft recovery.
+- Searchable command palette with keyboard navigation.
 - Line-numbered editor with synchronized preview positioning.
 - Native preview rendering with code highlighting, local images, and Mermaid
   flowchart support.
@@ -107,6 +108,7 @@ flowchart LR
 
 | Shortcut | Action |
 | --- | --- |
+| `Ctrl+K` or `Ctrl+Shift+P` | Open command palette |
 | `Ctrl+N` | Create a new Markdown file |
 | `Ctrl+Shift+O` | Select working folder |
 | `Ctrl+O` | Open Markdown file |
@@ -121,6 +123,16 @@ flowchart LR
 | `Alt+D` | Switch to Velocidark |
 
 On macOS, egui maps command-style shortcuts to the platform command modifier.
+
+The command palette supports case-insensitive/fuzzy search, Up/Down selection,
+Enter to run a command, and Escape to dismiss. `Ctrl+W` closes a **folder tab**,
+not a document; it leaves loaded documents intact and keeps the last folder open.
+
+Save As refuses destinations already owned by another open document (including
+symlink aliases). Failed writes retain dirty content in session recovery. If a
+recovered draft differs from its on-disk file, it reopens as a pathless copy rather
+than automatically overwriting the disk version. Save or rename that copy to
+choose its destination.
 
 ## Development
 
@@ -137,6 +149,17 @@ cargo test --locked
 cargo clippy --all-targets --all-features
 cargo run
 ```
+
+Linux native smoke (isolated Xvfb display and temporary notes/config):
+
+```bash
+cargo build --locked
+python3 scripts/native-smoke.py
+```
+
+Requires `Xvfb`, `xvfb-run`, `xdotool`, and ImageMagick. Results and screenshots
+are written to the ignored `target/native-smoke/` directory. See
+[stabilization notes](docs/stabilization.md) for coverage and remaining limitations.
 
 The main app modules are:
 

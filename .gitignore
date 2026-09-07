@@ -1,4 +1,5 @@
 /target
-/docs
+/docs/*
+!/docs/stabilization.md
 /dist
 .codex

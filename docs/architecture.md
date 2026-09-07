@@ -1,5 +1,9 @@
 # Velocimd Architecture
 
+> Historical foundation design. The current folder-tab behavior, native preview,
+> save/recovery invariants, and command palette are described in README.md and
+> [stabilization.md](stabilization.md). The “Next real work” list below predates those changes.
+
 Velocimd starts as a native Rust desktop application using `eframe/egui`. That keeps the app simple, fast to launch, and portable without immediately taking on a webview stack.
 
 ## Design priorities

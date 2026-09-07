@@ -106,9 +106,13 @@ fn advance_next_id_to(next: u64) {
     }
 }
 
-fn strip_markdown_extension(title: &str) -> &str {
-    title
-        .strip_suffix(".markdown")
-        .or_else(|| title.strip_suffix(".md"))
-        .unwrap_or(title)
+pub(crate) fn is_markdown_extension(extension: &str) -> bool {
+    extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+}
+
+pub(crate) fn strip_markdown_extension(title: &str) -> &str {
+    match title.rsplit_once('.') {
+        Some((stem, extension)) if is_markdown_extension(extension) => stem,
+        _ => title,
+    }
 }

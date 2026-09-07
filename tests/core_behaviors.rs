@@ -234,7 +234,7 @@ fn save_file_as_updates_current_document_without_switching_tabs() {
 fn close_tab_keeps_at_least_one_document() {
     let mut state = AppState::fresh();
 
-    state.execute(Command::CloseTab);
+    state.close_tab();
 
     assert_eq!(state.documents.len(), 1);
     assert_eq!(state.active_document, 0);
