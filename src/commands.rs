@@ -7,7 +7,7 @@ pub enum Command {
     OpenFile,
     SaveFile,
     SaveFileAs,
-    CloseTab,
+    CloseFolderTab,
     TogglePalette,
     SetMode(EditorMode),
     CycleMode,
@@ -23,7 +23,7 @@ impl Command {
             Self::OpenFile => "Open file...",
             Self::SaveFile => "Save file",
             Self::SaveFileAs => "Save file as...",
-            Self::CloseTab => "Close tab",
+            Self::CloseFolderTab => "Close folder tab",
             Self::TogglePalette => "Toggle command palette",
             Self::SetMode(EditorMode::Edit) => "Switch to edit mode",
             Self::SetMode(EditorMode::Preview) => "Switch to preview mode",
@@ -41,7 +41,7 @@ impl Command {
             Self::OpenFile => "Ctrl+O",
             Self::SaveFile => "Ctrl+S",
             Self::SaveFileAs => "Ctrl+Shift+S",
-            Self::CloseTab => "Ctrl+W",
+            Self::CloseFolderTab => "Ctrl+W",
             Self::TogglePalette => "Ctrl+K",
             Self::SetMode(EditorMode::Edit) => "Ctrl+1",
             Self::SetMode(EditorMode::Preview) => "Ctrl+2",
@@ -59,7 +59,7 @@ impl Command {
             Self::OpenFile => "[O]",
             Self::SaveFile => "[S]",
             Self::SaveFileAs => "[S+]",
-            Self::CloseTab => "x",
+            Self::CloseFolderTab => "x",
             Self::TogglePalette => "[?]",
             Self::SetMode(EditorMode::Edit) => "[E]",
             Self::SetMode(EditorMode::Preview) => "[P]",
@@ -77,7 +77,7 @@ impl Command {
             Self::OpenFile,
             Self::SaveFile,
             Self::SaveFileAs,
-            Self::CloseTab,
+            Self::CloseFolderTab,
             Self::SetMode(EditorMode::Edit),
             Self::SetMode(EditorMode::Preview),
             Self::SetMode(EditorMode::Split),
@@ -88,6 +88,30 @@ impl Command {
         ]
     }
 
+    /// Case-insensitive substring-first, then subsequence matching for palette search.
+    pub fn matching(query: &str) -> Vec<Command> {
+        let query = query.trim().to_lowercase();
+        let mut matches: Vec<_> = Self::all()
+            .iter()
+            .copied()
+            .filter(|command| *command != Self::TogglePalette)
+            .filter_map(|command| {
+                let label = command.label().to_lowercase();
+                if label.contains(&query) {
+                    return Some((0, command));
+                }
+                let mut chars = label.chars();
+                query
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .all(|needle| chars.any(|c| c == needle))
+                    .then_some((1, command))
+            })
+            .collect();
+        matches.sort_by_key(|(rank, _)| *rank);
+        matches.into_iter().map(|(_, command)| command).collect()
+    }
+
     pub fn toolbar() -> &'static [Command] {
         &[
             Self::NewTab,
@@ -95,7 +119,7 @@ impl Command {
             Self::OpenFile,
             Self::SaveFile,
             Self::SaveFileAs,
-            Self::CloseTab,
+            Self::CloseFolderTab,
             Self::SetMode(EditorMode::Edit),
             Self::SetMode(EditorMode::Preview),
             Self::SetMode(EditorMode::Split),

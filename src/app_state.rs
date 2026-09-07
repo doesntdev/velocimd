@@ -1,4 +1,7 @@
-use crate::{commands::Command, document::Document, modes::EditorMode, theme::ThemeConfig};
+use crate::{
+    commands::Command, document::Document, file_io::atomic_write, modes::EditorMode,
+    theme::ThemeConfig,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,6 +27,8 @@ pub struct AppState {
     pub recent_files: Vec<PathBuf>,
     #[serde(default)]
     pub working_folder: Option<PathBuf>,
+    #[serde(skip)]
+    storage_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,8 +87,8 @@ impl PersistedAppState {
             folder_tabs: state.folder_tabs.clone(),
             active_folder_tab: state.active_folder_tab,
             mode: state.mode,
-            command_palette_open: state.command_palette_open,
-            command_query: state.command_query.clone(),
+            command_palette_open: false,
+            command_query: String::new(),
             theme: state.theme.clone(),
             window_size: state.window_size,
             recent_files: state.recent_files.clone(),
@@ -108,6 +113,7 @@ impl PersistedAppState {
             window_size: self.window_size,
             recent_files: self.recent_files,
             working_folder: self.working_folder,
+            storage_path: None,
         }
     }
 }
@@ -119,24 +125,31 @@ impl PersistedDocument {
             title: document.title.clone(),
             path: document.path.clone(),
             dirty: document.dirty,
-            scratch_content: document.path.is_none().then(|| document.content.clone()),
+            scratch_content: (document.path.is_none() || document.dirty)
+                .then(|| document.content.clone()),
             content: None,
         }
     }
 
     fn into_document(self) -> Document {
-        let fallback_content = self.scratch_content.or(self.content).unwrap_or_default();
+        let snapshot = self.scratch_content.or(self.content);
+        let was_scratch = self.path.is_none();
         let mut path = self.path;
-        let (content, dirty) = if let Some(document_path) = path.as_ref() {
-            match read_document_content(document_path) {
-                Some(content) => (content, self.dirty),
-                None => {
-                    path = None;
-                    (fallback_content, false)
-                }
+        let disk_content = path.as_deref().and_then(read_document_content);
+        let (content, dirty) = if self.dirty && snapshot.is_some() {
+            let recovered = snapshot.unwrap_or_default();
+            if disk_content.as_deref() == Some(recovered.as_str()) {
+                (recovered, false)
+            } else {
+                // Preserve the draft separately; never autosave it over changed disk content.
+                path = None;
+                (recovered, true)
             }
+        } else if let Some(content) = disk_content {
+            (content, false)
         } else {
-            (fallback_content, self.dirty)
+            path = None;
+            (snapshot.unwrap_or_default(), self.dirty && was_scratch)
         };
 
         Document {
@@ -154,7 +167,7 @@ impl AppState {
     pub fn new() -> Self {
         // Try to load the state from file
         if let Ok(state) = Self::load() {
-            return state.normalized();
+            return state;
         }
 
         Self::fresh()
@@ -181,23 +194,39 @@ impl AppState {
             window_size: None,
             recent_files: Vec::new(),
             working_folder: None,
+            storage_path: None,
         }
     }
 
     /// Load the app state from the config file.
     pub fn load() -> Result<Self> {
-        let path = Self::state_path()?;
+        Self::load_from(Self::state_path()?)
+    }
+
+    /// Load a session from an explicit location; subsequent saves stay in that location.
+    pub fn load_from(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let content = fs::read_to_string(path)?;
-        let state: PersistedAppState = serde_json::from_str(&content)?;
-        Ok(state.into_state())
+        let persisted: PersistedAppState = serde_json::from_str(&content)?;
+        let mut state = persisted.into_state().normalized();
+        state.storage_path = Some(path.to_path_buf());
+        Ok(state)
     }
 
     /// Save the app state to the config file.
     pub fn save(&self) -> Result<()> {
-        let path = Self::state_path()?;
+        let path = match &self.storage_path {
+            Some(path) => path.clone(),
+            None => Self::state_path()?,
+        };
+        self.save_to(path)
+    }
+
+    pub fn save_to(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
         let persisted = PersistedAppState::from_state(self);
         let json = serde_json::to_string(&persisted)?;
-        fs::write(path, json)?;
+        atomic_write(path, json.as_bytes(), true)?;
         Ok(())
     }
 
@@ -286,11 +315,26 @@ impl AppState {
         true
     }
 
+    pub fn path_owned_by_other(&self, index: usize, path: &Path) -> bool {
+        let path = normalized_path(path);
+        self.documents.iter().enumerate().any(|(owner, document)| {
+            owner != index
+                && document
+                    .path
+                    .as_deref()
+                    .is_some_and(|existing| normalized_path(existing) == path)
+        })
+    }
+
     pub fn save_file(&mut self) -> Option<PathBuf> {
         self.save_document_at(self.active_document)
     }
 
     pub fn save_file_as(&mut self, path: PathBuf) -> bool {
+        if self.path_owned_by_other(self.active_document, &path) {
+            return false;
+        }
+        let path = normalized_path(&path);
         let Some(content) = self
             .active_document()
             .map(|document| document.content.clone())
@@ -298,7 +342,7 @@ impl AppState {
             return false;
         };
 
-        if fs::write(&path, content).is_err() {
+        if atomic_write(&path, content.as_bytes(), true).is_err() {
             return false;
         }
 
@@ -334,16 +378,13 @@ impl AppState {
             let new_path =
                 unique_markdown_path_excluding(folder, &file_name, &self.documents, index);
 
-            if new_path != current_path && current_path.exists() {
-                fs::rename(&current_path, &new_path).ok()?;
-            }
-
-            fs::write(&new_path, content).ok()?;
+            crate::file_io::rename_with_content(&current_path, &new_path, content.as_bytes())
+                .ok()?;
             new_path
         } else if let Some(folder) = self.active_folder_path() {
             let new_path =
                 unique_markdown_path_excluding(folder, &file_name, &self.documents, index);
-            fs::write(&new_path, content).ok()?;
+            atomic_write(&new_path, content.as_bytes(), false).ok()?;
             new_path
         } else {
             let document = self.documents.get_mut(index)?;
@@ -367,7 +408,7 @@ impl AppState {
     pub fn execute(&mut self, command: Command) {
         match command {
             Command::NewTab => self.new_tab(),
-            Command::CloseTab => self.close_tab(),
+            Command::CloseFolderTab => self.close_folder_tab_at(self.active_folder_tab),
             Command::TogglePalette => self.command_palette_open = !self.command_palette_open,
             Command::SetMode(mode) => self.mode = mode,
             Command::CycleMode => self.mode = self.mode.next(),
@@ -466,23 +507,17 @@ impl AppState {
     }
 
     pub fn save_document_at(&mut self, index: usize) -> Option<PathBuf> {
-        let path = self.ensure_document_path(index)?;
-        let content = self.documents.get(index)?.content.clone();
-        fs::write(&path, content).ok()?;
-
-        let document = self.documents.get_mut(index)?;
-        document.dirty = false;
-        self.remember_recent_file(path.clone());
-        Some(path)
-    }
-
-    fn ensure_document_path(&mut self, index: usize) -> Option<PathBuf> {
-        if let Some(path) = self.documents.get(index)?.path.clone() {
-            return Some(path);
+        let document = self.documents.get(index)?;
+        let overwrite = document.path.is_some();
+        let path = document
+            .path
+            .clone()
+            .or_else(|| self.default_document_path(&document.title))?;
+        if self.path_owned_by_other(index, &path) {
+            return None;
         }
-
-        let title = self.documents.get(index)?.title.clone();
-        let path = self.default_document_path(&title)?;
+        atomic_write(&path, document.content.as_bytes(), overwrite).ok()?;
+        let path = fs::canonicalize(&path).unwrap_or(path);
         let document = self.documents.get_mut(index)?;
         document.path = Some(path.clone());
         document.title = path
@@ -490,6 +525,8 @@ impl AppState {
             .and_then(|name| name.to_str())
             .unwrap_or("Unknown")
             .to_string();
+        document.dirty = false;
+        self.remember_recent_file(path.clone());
         Some(path)
     }
 
@@ -510,6 +547,19 @@ impl AppState {
         }
 
         Document::repair_ids(&mut self.documents);
+        let mut owned_paths = std::collections::HashSet::new();
+        for document in &mut self.documents {
+            if let Some(path) = document.path.take() {
+                let path = normalized_path(&path);
+                if owned_paths.insert(path.clone()) {
+                    document.path = Some(path);
+                } else {
+                    // Legacy states could contain two live buffers for one file.
+                    // Retain the second as a recovery copy rather than discard it.
+                    document.dirty = true;
+                }
+            }
+        }
         self.normalize_folder_tabs();
 
         if self.active_document >= self.documents.len() {
@@ -614,6 +664,19 @@ fn unique_markdown_path_for_file_name(
     }
 }
 
+fn normalized_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        match (fs::canonicalize(parent), path.file_name()) {
+            (Ok(parent), Some(name)) => parent.join(name),
+            _ => path.to_path_buf(),
+        }
+    })
+}
+
 fn read_document_content(path: &Path) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_DOCUMENT_BYTES {
@@ -640,7 +703,7 @@ fn markdown_file_name(title: &str) -> String {
         sanitized.to_string()
     };
 
-    if !file_name.ends_with(".md") && !file_name.ends_with(".markdown") {
+    if crate::document::strip_markdown_extension(&file_name) == file_name {
         file_name.push_str(".md");
     }
 
@@ -666,6 +729,90 @@ fn split_stem_extension(file_name: &str) -> (String, String) {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn failed_first_save_preserves_scratch_path_and_recovery() {
+        let folder =
+            std::env::temp_dir().join(format!("velocimd-first-save-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let mut state = AppState::fresh();
+        assert!(state.add_folder_tab(folder.clone()));
+        fs::remove_dir_all(&folder).unwrap();
+        state
+            .active_document_mut()
+            .unwrap()
+            .set_content("irreplaceable draft".into());
+        assert!(state.save_file().is_none());
+        assert!(state.active_document().unwrap().path.is_none());
+        let restored = round_trip(&state);
+        assert_eq!(
+            restored.active_document().unwrap().content,
+            "irreplaceable draft"
+        );
+        assert!(restored.active_document().unwrap().dirty);
+    }
+
+    #[test]
+    fn failed_file_backed_save_recovers_draft_without_overwriting_disk() {
+        let folder = std::env::temp_dir().join(format!("velocimd-recovery-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("Note.md");
+        fs::write(&path, "disk original").unwrap();
+        let mut state = AppState::fresh();
+        assert!(state.open_file(path.clone()));
+        state
+            .active_document_mut()
+            .unwrap()
+            .set_content("unsaved draft".into());
+        // A directory at the destination deterministically makes a save fail even as root.
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(state.save_file().is_none());
+        fs::remove_dir(&path).unwrap();
+        fs::write(&path, "external edit").unwrap();
+        let restored = round_trip(&state);
+        let recovered = restored.active_document().unwrap();
+        assert_eq!(recovered.content, "unsaved draft");
+        assert!(
+            recovered.path.is_none(),
+            "recovery must not overwrite external changes"
+        );
+        assert!(recovered.dirty);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "external edit");
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn restored_duplicate_paths_keep_only_one_owner_and_retain_both_buffers() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("Note.md");
+        fs::write(&path, "disk").unwrap();
+        let mut state = AppState::fresh();
+        assert!(state.open_file(path.clone()));
+        let mut duplicate = state.active_document().unwrap().clone();
+        duplicate.id += 1;
+        state.documents.push(duplicate);
+        let restored = round_trip(&state);
+        let canonical = fs::canonicalize(path).unwrap();
+        assert_eq!(
+            restored
+                .documents
+                .iter()
+                .filter(|doc| doc.path.as_ref() == Some(&canonical))
+                .count(),
+            1
+        );
+        assert_eq!(restored.documents.last().unwrap().content, "disk");
+        assert!(restored.documents.last().unwrap().path.is_none());
+    }
+
+    fn round_trip(state: &AppState) -> AppState {
+        let json = serde_json::to_string(&PersistedAppState::from_state(state)).unwrap();
+        serde_json::from_str::<PersistedAppState>(&json)
+            .unwrap()
+            .into_state()
+            .normalized()
+    }
 
     #[test]
     fn normalized_repairs_duplicate_document_ids() {

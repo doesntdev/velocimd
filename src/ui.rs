@@ -205,7 +205,7 @@ struct EditorOutcome {
     line_count: usize,
     galley_top: f32,
     text_clip_top: f32,
-    row_height: f32,
+    galley: Option<std::sync::Arc<egui::Galley>>,
 }
 
 #[derive(Default)]
@@ -310,6 +310,8 @@ pub struct VelocimdApp {
     file_name_editor_document_id: Option<u64>,
     file_name_editor_text: String,
     status_message: Option<String>,
+    palette_selection: usize,
+    palette_focus_requested: bool,
 }
 
 impl VelocimdApp {
@@ -323,6 +325,10 @@ impl VelocimdApp {
             let _ = state.open_file(path);
         }
         state.theme.apply_to(&cc.egui_ctx);
+        Self::from_state(state)
+    }
+
+    fn from_state(state: AppState) -> Self {
         Self {
             state,
             preview_renderer: PreviewRenderer::default(),
@@ -338,6 +344,8 @@ impl VelocimdApp {
             file_name_editor_document_id: None,
             file_name_editor_text: String::new(),
             status_message: None,
+            palette_selection: 0,
+            palette_focus_requested: false,
         }
     }
 
@@ -391,7 +399,13 @@ impl VelocimdApp {
             let command_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
             let alt = egui::Modifiers::ALT;
 
-            if input.consume_shortcut(&shortcut(command_shift, egui::Key::S)) {
+            if input.consume_shortcut(&shortcut(command, egui::Key::K))
+                || input.consume_shortcut(&shortcut(command_shift, egui::Key::P))
+            {
+                Some(Command::TogglePalette)
+            } else if self.state.command_palette_open {
+                None
+            } else if input.consume_shortcut(&shortcut(command_shift, egui::Key::S)) {
                 Some(Command::SaveFileAs)
             } else if input.consume_shortcut(&shortcut(command_shift, egui::Key::O)) {
                 Some(Command::SelectWorkingFolder)
@@ -402,7 +416,7 @@ impl VelocimdApp {
             } else if input.consume_shortcut(&shortcut(command, egui::Key::N)) {
                 Some(Command::NewTab)
             } else if input.consume_shortcut(&shortcut(command, egui::Key::W)) {
-                Some(Command::CloseTab)
+                Some(Command::CloseFolderTab)
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Num1)) {
                 Some(Command::SetMode(EditorMode::Edit))
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Num2)) {
@@ -421,6 +435,76 @@ impl VelocimdApp {
         });
 
         if let Some(command) = command {
+            self.run_command(ctx, command);
+        }
+    }
+
+    fn command_palette(&mut self, ctx: &egui::Context) {
+        if !self.state.command_palette_open {
+            return;
+        }
+        let (up, down, enter) = ctx.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            )
+        });
+        let mut selected_command = None;
+        let response = egui::Modal::new(egui::Id::new("command_palette")).show(ctx, |ui| {
+            ui.set_width((ctx.content_rect().width() - 48.0).clamp(180.0, 480.0));
+            ui.heading("Command palette");
+            let search = ui.add(
+                egui::TextEdit::singleline(&mut self.state.command_query)
+                    .id_salt("command_search")
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Search commands…"),
+            );
+            if self.palette_focus_requested {
+                search.request_focus();
+                self.palette_focus_requested = false;
+            }
+            if search.changed() {
+                self.palette_selection = 0;
+            }
+            let commands = Command::matching(&self.state.command_query);
+            self.palette_selection = self.palette_selection.min(commands.len().saturating_sub(1));
+            if up {
+                self.palette_selection = self.palette_selection.saturating_sub(1);
+            }
+            if down && !commands.is_empty() {
+                self.palette_selection = (self.palette_selection + 1).min(commands.len() - 1);
+            }
+            ui.separator();
+            if commands.is_empty() {
+                ui.label("No matching commands");
+            }
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for (index, command) in commands.iter().enumerate() {
+                        let response = ui.selectable_label(
+                            index == self.palette_selection,
+                            format!("{}    {}", command.label(), command.shortcut()),
+                        );
+                        if response.clicked() {
+                            selected_command = Some(*command);
+                        }
+                        if index == self.palette_selection && (up || down || search.changed()) {
+                            response.scroll_to_me(None);
+                        }
+                    }
+                });
+            if enter {
+                selected_command = commands.get(self.palette_selection).copied();
+            }
+            ui.separator();
+            ui.small("Up/Down select · Enter run · Esc close");
+        });
+        if response.should_close() || selected_command.is_some() {
+            self.state.command_palette_open = false;
+        }
+        if let Some(command) = selected_command {
             self.run_command(ctx, command);
         }
     }
@@ -726,10 +810,30 @@ impl VelocimdApp {
 
     fn editor_content(&mut self, ui: &mut egui::Ui, min_height: f32) -> EditorOutcome {
         let tokens = self.tokens();
-        let Some(line_count) = self.state.active_document().map(|document| {
-            self.line_metadata
-                .line_count(document.id, document.revision, &document.content)
-        }) else {
+        let editor_font = egui::TextStyle::Monospace.resolve(ui.style());
+        let row_height = ui.fonts_mut(|fonts| fonts.row_height(&editor_font));
+        let editor_margin = f32::from(EDITOR_TEXT_MARGIN);
+        let Some((line_count, text_height, visible_rows, gutter_width)) =
+            self.state.active_document().map(|document| {
+                let line_count = self.line_metadata.line_count(
+                    document.id,
+                    document.revision,
+                    &document.content,
+                );
+                let digit_count = line_count.to_string().len().max(2);
+                let gutter_width = editor_gutter_width(digit_count);
+                let wrap_width =
+                    (ui.available_width() - gutter_width - 1.0 - editor_margin * 2.0).max(1.0);
+                let visible_rows =
+                    editor_visual_rows(ui, &document.content, &editor_font, wrap_width, row_height)
+                        .max(line_count)
+                        .max(1);
+                let text_height =
+                    min_height.max(row_height * visible_rows as f32 + editor_margin * 2.0);
+
+                (line_count, text_height, visible_rows, gutter_width)
+            })
+        else {
             ui.label("No document open.");
             return EditorOutcome::default();
         };
@@ -738,16 +842,7 @@ impl VelocimdApp {
             return EditorOutcome::default();
         };
 
-        let editor_font = egui::TextStyle::Monospace.resolve(ui.style());
-        let row_height = ui.fonts_mut(|fonts| fonts.row_height(&editor_font));
-        let editor_margin = f32::from(EDITOR_TEXT_MARGIN);
-        let text_height = min_height.max(row_height * line_count as f32 + editor_margin * 2.0);
-        let visible_rows = ((text_height - editor_margin * 2.0) / row_height)
-            .floor()
-            .max(line_count as f32)
-            .max(1.0) as usize;
         let digit_count = line_count.to_string().len().max(2);
-        let gutter_width = digit_count as f32 * 9.0 + 18.0;
         let available_width = ui.available_width();
         let outer_size = egui::vec2(available_width, text_height);
         let (outer_rect, _) = ui.allocate_exact_size(outer_size, egui::Sense::hover());
@@ -786,8 +881,12 @@ impl VelocimdApp {
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY)
                         .desired_rows(visible_rows)
-                        .margin(egui::Margin::same(EDITOR_TEXT_MARGIN))
-                        .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
+                        .id_salt(("document_editor", document.id))
+                        .frame(
+                            egui::Frame::new()
+                                .fill(egui::Color32::TRANSPARENT)
+                                .inner_margin(egui::Margin::same(EDITOR_TEXT_MARGIN)),
+                        )
                         .lock_focus(true)
                         .min_size(text_rect.size())
                         .show(ui)
@@ -845,8 +944,7 @@ impl VelocimdApp {
                     clicked_position.map(|position| {
                         line_for_editor_y(
                             position.y - text_output.galley_pos.y,
-                            row_height,
-                            line_count,
+                            &text_output.galley,
                         )
                     })
                 })
@@ -863,11 +961,14 @@ impl VelocimdApp {
             line_count,
             galley_top: text_output.galley_pos.y,
             text_clip_top: text_output.text_clip_rect.top(),
-            row_height,
+            galley: Some(text_output.galley.clone()),
         };
 
         if outcome.changed {
             document.mark_changed();
+            // Newlines/wrapping can change height during this frame's input handling.
+            ui.ctx()
+                .request_discard("editor content changed; recompute bounds and gutter");
         }
 
         outcome
@@ -1027,10 +1128,12 @@ impl VelocimdApp {
             Command::SaveFileAs => self.save_file_as(ctx),
             Command::SwitchThemeLight => self.switch_theme(ctx, ThemeConfig::default_light()),
             Command::SwitchThemeDark => self.switch_theme(ctx, ThemeConfig::default_dark()),
-            Command::TogglePalette => {}
-            Command::CloseTab => {
-                self.state.close_folder_tab_at(self.state.active_folder_tab);
-                self.persist_state();
+            Command::TogglePalette => {
+                self.state.execute(command);
+                self.state.command_query.clear();
+                self.palette_selection = 0;
+                self.palette_focus_requested = self.state.command_palette_open;
+                ctx.request_repaint();
             }
             command => {
                 self.state.execute(command);
@@ -1059,7 +1162,10 @@ impl VelocimdApp {
             created_path
                 .as_ref()
                 .map(|path| format!("Created {}", short_path(path)))
-                .unwrap_or_else(|| "Created Markdown file".to_string()),
+                .unwrap_or_else(|| {
+                    "File creation failed; draft retained. Choose another folder or use Save As."
+                        .to_string()
+                }),
         );
         self.persist_state();
         ctx.request_repaint();
@@ -1155,6 +1261,15 @@ impl VelocimdApp {
 
         if let Some(path) = selected {
             let path = with_markdown_extension(path);
+            if self
+                .state
+                .path_owned_by_other(self.state.active_document, &path)
+            {
+                self.status_message = Some(
+                    "Save As blocked: that file is already open. Choose another name.".to_string(),
+                );
+                return;
+            }
             if self.state.save_file_as(path.clone()) {
                 self.invalidate_folder_for_path(&path);
                 self.file_name_editor_document_id = None;
@@ -1276,13 +1391,22 @@ impl App for VelocimdApp {
                 self.top_bar(ui, &ctx);
                 self.workspace(ui, &ctx);
             });
+        self.command_palette(&ctx);
     }
 }
 
 impl Drop for VelocimdApp {
     fn drop(&mut self) {
-        let _ = self.state.save_dirty_documents();
-        let _ = self.state.save();
+        let result = self.state.save_dirty_documents();
+        if result.failed > 0 {
+            eprintln!(
+                "Velocimd: {} document saves failed; preserving drafts in session recovery",
+                result.failed
+            );
+        }
+        if let Err(error) = self.state.save() {
+            eprintln!("Velocimd: session recovery save failed: {error}");
+        }
     }
 }
 
@@ -1449,26 +1573,53 @@ fn scroll_preview_rect_at(ui: &mut egui::Ui, anchor: PreviewSyncAnchor, y: f32, 
 }
 
 fn top_visible_editor_line(visible_top: f32, outcome: &EditorOutcome) -> usize {
-    if outcome.row_height <= 0.0 || outcome.line_count == 0 {
+    let Some(galley) = &outcome.galley else {
         return 0;
-    }
-
-    let text_visible_top = visible_top.max(outcome.text_clip_top);
-    (((text_visible_top - outcome.galley_top).max(0.0) / outcome.row_height)
-        .floor()
-        .max(0.0) as usize)
-        .min(outcome.line_count.saturating_sub(1))
+    };
+    let local_y = visible_top.max(outcome.text_clip_top) - outcome.galley_top;
+    line_for_editor_y(local_y, galley).min(outcome.line_count.saturating_sub(1))
 }
 
-fn line_for_editor_y(local_y: f32, row_height: f32, line_count: usize) -> usize {
-    if row_height <= 0.0 || line_count == 0 {
-        return 0;
+fn line_for_editor_y(local_y: f32, galley: &egui::Galley) -> usize {
+    let row_index = galley
+        .rows
+        .partition_point(|row| row.pos.y <= local_y.max(0.0))
+        .saturating_sub(1);
+    galley
+        .rows
+        .iter()
+        .take(row_index)
+        .filter(|row| row.ends_with_newline)
+        .count()
+}
+
+fn editor_gutter_width(digit_count: usize) -> f32 {
+    digit_count as f32 * 9.0 + 18.0
+}
+
+fn editor_visual_rows(
+    ui: &mut egui::Ui,
+    content: &str,
+    font_id: &egui::FontId,
+    wrap_width: f32,
+    row_height: f32,
+) -> usize {
+    if row_height <= 0.0 {
+        return 1;
     }
 
-    (local_y.max(0.0) / row_height)
-        .floor()
-        .max(0.0)
-        .min(line_count.saturating_sub(1) as f32) as usize
+    let text_color = ui.visuals().widgets.inactive.text_color();
+    let galley_height = ui.fonts_mut(|fonts| {
+        let job = egui::text::LayoutJob::simple(
+            content.to_owned(),
+            font_id.clone(),
+            text_color,
+            wrap_width.max(1.0),
+        );
+        fonts.layout_job(job).size().y
+    });
+
+    (galley_height / row_height).ceil().max(1.0) as usize
 }
 
 fn viewport_anchor_for_y(y: f32, rect: egui::Rect) -> f32 {
@@ -1625,16 +1776,10 @@ fn folder_entries(folder: &Path) -> Vec<FolderEntry> {
 fn is_markdown_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown")
-        })
+        .is_some_and(crate::document::is_markdown_extension)
 }
 
-fn strip_markdown_extension(name: &str) -> &str {
-    name.strip_suffix(".markdown")
-        .or_else(|| name.strip_suffix(".md"))
-        .unwrap_or(name)
-}
+use crate::document::strip_markdown_extension;
 
 #[cfg(test)]
 mod preview_sync_tests {
@@ -1654,6 +1799,197 @@ mod preview_sync_tests {
         assert_eq!(mermaid.line_count, 4);
         assert!(line_in_segment(4, mermaid.start_line, mermaid.line_count));
         assert!(!line_in_segment(6, mermaid.start_line, mermaid.line_count));
+    }
+
+    fn test_app(content: &str) -> (tempfile::TempDir, VelocimdApp) {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("state.json");
+        let mut state = AppState::fresh();
+        state.documents = vec![crate::document::Document::scratch("Test.md", content)];
+        state.save_to(&session).unwrap();
+        let state = AppState::load_from(session).unwrap();
+        (temp, VelocimdApp::from_state(state))
+    }
+
+    #[test]
+    fn wrapped_first_line_maps_all_visual_rows_to_logical_zero() {
+        let (_temp, mut app) = test_app(&format!("{}\nsecond", "W".repeat(200)));
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_max_width(180.0);
+            let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+            let outcome = app.editor_content(ui, 160.0);
+            let line = top_visible_editor_line(outcome.galley_top + row_height * 1.2, &outcome);
+            assert_eq!(line, 0, "a soft wrap is not a new source line");
+        });
+    }
+
+    #[test]
+    fn editor_height_covers_wrapped_text_across_widths_and_themes() {
+        for theme in [ThemeConfig::default_light(), ThemeConfig::default_dark()] {
+            for width in [180.0, 320.0, 640.0, 960.0] {
+                let (_temp, mut app) = test_app(&format!("{}\nsecond", "words λ界 ".repeat(80)));
+                let ctx = egui::Context::default();
+                theme.apply_to(&ctx);
+                let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    ui.set_max_width(width);
+                    let top = ui.cursor().top();
+                    let outcome = app.editor_content(ui, 160.0);
+                    let galley = outcome.galley.as_ref().unwrap();
+                    assert!(galley.rows.len() > 2);
+                    assert!(outcome.galley_top + galley.size().y <= ui.min_rect().bottom() + 0.5);
+                    assert!(outcome.galley_top >= top + f32::from(EDITOR_TEXT_MARGIN));
+                    for row in &galley.rows[..galley.rows.len() - 1] {
+                        assert_eq!(line_for_editor_y(row.pos.y + 0.1, galley), 0);
+                    }
+                    assert_eq!(
+                        line_for_editor_y(galley.rows.last().unwrap().pos.y + 0.1, galley),
+                        1
+                    );
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn close_command_has_same_folder_semantics_in_core_and_ui() {
+        let (temp, mut app) = test_app("draft");
+        assert!(app.state.add_folder_tab(temp.path().join("one")));
+        assert!(app.state.add_folder_tab(temp.path().join("two")));
+        let mut core = app.state.clone();
+        core.execute(Command::CloseFolderTab);
+        app.run_command(&egui::Context::default(), Command::CloseFolderTab);
+        assert_eq!(Command::CloseFolderTab.label(), "Close folder tab");
+        assert_eq!(core.folder_tabs, app.state.folder_tabs);
+        assert_eq!(core.folder_tabs.len(), 1);
+        assert_eq!(core.documents, app.state.documents);
+        let restored = AppState::load_from(temp.path().join("state.json")).unwrap();
+        assert_eq!(restored.folder_tabs, core.folder_tabs);
+    }
+
+    fn key_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            modifiers,
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn palette_opens_from_both_advertised_shortcuts() {
+        for (key, modifiers) in [
+            (egui::Key::K, egui::Modifiers::COMMAND),
+            (
+                egui::Key::P,
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            ),
+        ] {
+            let (_temp, mut app) = test_app("draft");
+            let ctx = egui::Context::default();
+            let _ = ctx.run_ui(key_input(key, modifiers), |ui| {
+                app.handle_shortcuts(ui.ctx())
+            });
+            assert!(app.state.command_palette_open);
+        }
+    }
+
+    fn palette_frame(app: &mut VelocimdApp, ctx: &egui::Context, input: egui::RawInput) {
+        let _ = ctx.run_ui(input, |ui| {
+            app.handle_shortcuts(ui.ctx());
+            app.command_palette(ui.ctx());
+        });
+    }
+
+    #[test]
+    fn palette_search_arrow_enter_executes_real_command_and_persists() {
+        let (temp, mut app) = test_app("draft");
+        let ctx = egui::Context::default();
+        palette_frame(
+            &mut app,
+            &ctx,
+            key_input(egui::Key::K, egui::Modifiers::COMMAND),
+        );
+        palette_frame(&mut app, &ctx, egui::RawInput::default());
+        let query = egui::RawInput {
+            events: vec![egui::Event::Text("mode".into())],
+            ..Default::default()
+        };
+        palette_frame(&mut app, &ctx, query);
+        assert_eq!(app.state.command_query, "mode");
+        palette_frame(
+            &mut app,
+            &ctx,
+            key_input(egui::Key::ArrowDown, egui::Modifiers::NONE),
+        );
+        palette_frame(
+            &mut app,
+            &ctx,
+            key_input(egui::Key::Enter, egui::Modifiers::NONE),
+        );
+        assert!(!app.state.command_palette_open);
+        assert_eq!(app.state.mode, EditorMode::Preview);
+        assert_eq!(
+            AppState::load_from(temp.path().join("state.json"))
+                .unwrap()
+                .mode,
+            EditorMode::Preview
+        );
+        assert_eq!(app.state.active_document().unwrap().content, "draft");
+    }
+
+    #[test]
+    fn palette_escape_and_unmatched_enter_do_not_execute_commands() {
+        let (_temp, mut app) = test_app("draft");
+        let ctx = egui::Context::default();
+        palette_frame(
+            &mut app,
+            &ctx,
+            key_input(egui::Key::K, egui::Modifiers::COMMAND),
+        );
+        palette_frame(&mut app, &ctx, egui::RawInput::default());
+        app.state.command_query = "no-such-command-xyz".into();
+        palette_frame(
+            &mut app,
+            &ctx,
+            key_input(egui::Key::Enter, egui::Modifiers::NONE),
+        );
+        assert!(app.state.command_palette_open);
+        palette_frame(
+            &mut app,
+            &ctx,
+            key_input(egui::Key::Escape, egui::Modifiers::NONE),
+        );
+        assert!(!app.state.command_palette_open);
+        assert_eq!(app.state.mode, EditorMode::Split);
+        assert_eq!(app.state.documents.len(), 1);
+        assert_eq!(Command::matching("svfls"), vec![Command::SaveFileAs]);
+    }
+
+    #[test]
+    fn close_folder_shortcut_preserves_dirty_document_and_last_folder() {
+        let (temp, mut app) = test_app("draft");
+        app.state.add_folder_tab(temp.path().join("one"));
+        app.state.add_folder_tab(temp.path().join("two"));
+        app.state.active_document_mut().unwrap().mark_changed();
+        let docs = app.state.documents.clone();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let _ = ctx.run_ui(key_input(egui::Key::W, egui::Modifiers::COMMAND), |ui| {
+                app.handle_shortcuts(ui.ctx())
+            });
+        }
+        assert_eq!(app.state.folder_tabs.len(), 1);
+        assert_eq!(app.state.documents, docs);
     }
 
     #[test]

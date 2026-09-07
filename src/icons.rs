@@ -28,7 +28,7 @@ impl Icon {
             Command::OpenFile => Self::File,
             Command::SaveFile => Self::Save,
             Command::SaveFileAs => Self::SaveAs,
-            Command::CloseTab => Self::X,
+            Command::CloseFolderTab => Self::X,
             Command::TogglePalette => Self::File,
             Command::SetMode(EditorMode::Edit) => Self::Edit,
             Command::SetMode(EditorMode::Preview) => Self::Eye,

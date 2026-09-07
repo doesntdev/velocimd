@@ -1,6 +1,7 @@
 pub mod app_state;
 pub mod commands;
 pub mod document;
+mod file_io;
 pub mod icons;
 pub mod markdown;
 pub mod mermaid;
