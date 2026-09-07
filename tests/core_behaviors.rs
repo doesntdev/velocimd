@@ -340,7 +340,7 @@ fn save_file_uses_working_folder_for_pathless_document() {
         .save_file()
         .expect("pathless document should save into working folder");
 
-    assert!(path.starts_with(&folder));
+    assert!(path.starts_with(canonical_path(&folder)));
     assert_eq!(
         fs::read_to_string(&path).expect("saved document should exist"),
         "# Saved in folder\n"
