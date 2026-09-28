@@ -320,6 +320,7 @@ impl VelocimdApp {
     }
 
     pub fn new_with_files(cc: &CreationContext<'_>, files: Vec<PathBuf>) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let mut state = AppState::new();
         for path in files {
             let _ = state.open_file(path);
@@ -559,12 +560,7 @@ impl VelocimdApp {
                                         egui::Sense::hover(),
                                     )
                                     .0;
-                                paint_icon(
-                                    ui.painter(),
-                                    Icon::Check,
-                                    rect.shrink(2.0),
-                                    tokens.success,
-                                );
+                                paint_icon(ui, Icon::Check, rect.shrink(2.0), tokens.success);
                                 ui.add(
                                     egui::Label::new(
                                         egui::RichText::new(status)
