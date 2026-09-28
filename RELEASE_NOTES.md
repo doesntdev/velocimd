@@ -1,31 +1,31 @@
-# Velocimd v0.1.4 — editor reliability and command palette
+# Velocimd v0.1.5 — a quieter toolbar
 
-## Fixed
+## Refreshed
 
-- Failed saves no longer assign a path before the first successful write. Dirty drafts are retained in session recovery, including file-backed drafts whose save failed.
-- Note and session writes use staged replacement instead of truncating files in place. Rename stages new content before removing the original.
-- Save As refuses a destination already owned by another open document, including symlink aliases. Legacy duplicate owners are recovered as separate scratch copies.
-- Wrapped text has correctly sized editor bounds and padding. Preview synchronization now distinguishes logical source lines from wrapped visual rows.
-- The Close command consistently closes a **folder tab** without discarding loaded documents.
-- Markdown extensions are handled case-insensitively; `Notes.MD` no longer becomes `Notes.MD.md`.
+- A cohesive family of 15 minimalist SVG icons replaces the hand-drawn toolbar symbols, with consistent rounded strokes, balanced proportions, and clearer file, save, edit, preview, and theme controls.
+- The same icons adapt to Velocidark, Velocilight, and custom themes: muted at rest, brighter on hover or keyboard focus, and accent-colored for the selected mode.
+- Square, centered artwork stays sharp at normal and high-DPI scales without stretching inside buttons.
+- Keyboard focus is more visible, and icon buttons expose their labels and selected state to accessibility tooling.
 
-## Added
+## Kept familiar
 
-- A working command palette: **Ctrl+K** or **Ctrl+Shift+P** (Cmd on macOS), searchable commands, Up/Down navigation, Enter to execute, and Escape to dismiss.
-- Regression tests for failed saves, recovery, path collisions, editor layout, and real UI command routing.
-- An isolated Linux native smoke test covering launch, palette, editing, autosave, graceful close, and reopen.
-- A release gate that assembles packages only after Linux, macOS, and Windows build jobs all succeed, plus `SHA256SUMS` for downloads.
+- The application logo, commands, keyboard shortcuts, tooltips, and button hit targets are unchanged.
+- Icons are embedded in the application and use the existing SVG loader/cache. No added dependency, icon font, runtime asset download, or network request.
+- This release is limited to the icon refresh. The separate navigation/sidebar redesign is not included.
+
+## Verification
+
+- Added regression coverage for icon source coverage, clipping, tinting, high-DPI raster sizes, texture reuse, and widget sizing/selection.
+- Added an isolated native toolbar smoke test for dark/light themes, normal and double-DPI rendering, real mode/theme clicks, save preservation, and graceful exit.
+- Retained native editing, autosave, command-palette, and reopen smoke coverage.
 
 ## Downloads
 
-- **Linux:** `.deb` for Debian/Ubuntu, `.AppImage`, or the Arch package archive/PKGBUILD.
+- **Linux:** Debian/Ubuntu `.deb`, `.AppImage`, or Arch package archive/PKGBUILD.
 - **macOS:** universal `.dmg` for Apple Silicon and Intel.
 - **Windows:** x64 NSIS setup installer.
+- **Integrity:** `SHA256SUMS` covers all six package assets.
 
-## Notes
+The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native GUI interaction is exercised on Linux; successful Windows/macOS package builds alone are not a claim of GUI certification.
 
-Back up important notes before upgrading. Recovery drafts that differ from the on-disk file reopen as separate scratch copies rather than automatically overwriting the disk version.
-
-The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native Linux GUI behavior is exercised; Windows/macOS GUI interaction is not certified by package builds alone. This release does not add cross-process file locking or guarantee recovery when both the note and session storage are unwritable. Preview alignment within complex rendered Markdown blocks remains approximate.
-
-**Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.3...v0.1.4
+**Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.4...v0.1.5
