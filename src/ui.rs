@@ -1001,6 +1001,24 @@ impl VelocimdApp {
                 }
                 EditorMode::Split => {
                     ui.columns(2, |columns| {
+                        let preview = &columns[1];
+                        if preview.is_enabled()
+                            && preview.rect_contains_pointer(preview.available_rect_before_wrap())
+                            && ctx.dragged_id().is_none()
+                        {
+                            // The editor owns Split's source position. Feed wheel input from
+                            // the preview into that ScrollArea instead of letting it snap back.
+                            // Preserve egui's smoothing and consume the vertical delta once.
+                            let delta = preview.input_mut(|input| {
+                                std::mem::take(&mut input.smooth_scroll_delta.y)
+                            });
+                            if delta != 0.0 {
+                                columns[0].scroll_with_delta_animation(
+                                    egui::vec2(0.0, delta),
+                                    egui::style::ScrollAnimation::none(),
+                                );
+                            }
+                        }
                         self.editor_pane(&mut columns[0], ctx, true);
 
                         self.preview_pane(&mut columns[1], true);
@@ -1530,6 +1548,167 @@ mod preview_sync_tests {
         state.save_to(&session).unwrap();
         let state = AppState::load_from(session).unwrap();
         (temp, VelocimdApp::from_state(state))
+    }
+
+    fn scroll_frame(
+        app: &mut VelocimdApp,
+        ctx: &egui::Context,
+        frame_number: &mut usize,
+        pointer: egui::Pos2,
+        wheel: Option<(egui::MouseWheelUnit, f32)>,
+    ) -> egui::FullOutput {
+        let mut events = vec![egui::Event::PointerMoved(pointer)];
+        if let Some((unit, delta)) = wheel {
+            events.push(egui::Event::MouseWheel {
+                unit,
+                delta: egui::vec2(0.0, delta),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 700.0),
+            )),
+            time: Some(*frame_number as f64 / 60.0),
+            events,
+            ..Default::default()
+        };
+        *frame_number += 1;
+        ctx.run_ui(input, |root| {
+            egui::CentralPanel::default().show_inside(root, |ui| app.workspace(ui, ctx));
+        })
+    }
+
+    fn first_visible_preview_section(output: &egui::FullOutput) -> usize {
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| {
+                let egui::Shape::Text(text) = &clipped.shape else {
+                    return None;
+                };
+                if !clipped.clip_rect.contains(text.pos) {
+                    return None;
+                }
+                text.galley
+                    .text()
+                    .strip_prefix("SECTION ")?
+                    .parse::<usize>()
+                    .ok()
+            })
+            .min()
+            .expect("a visible rendered Markdown heading")
+    }
+
+    #[test]
+    fn wheel_scrolls_both_split_panes_without_clicking_or_snapping_back() {
+        let content = (0..200)
+            .map(|index| format!("## SECTION {index:04}\n\nPlain paragraph {index:04}.\n\n"))
+            .collect::<String>();
+        for (unit, delta) in [
+            (egui::MouseWheelUnit::Point, 320.0),
+            (egui::MouseWheelUnit::Line, 8.0),
+        ] {
+            let mut offsets = Vec::new();
+            for x in [250.0, 750.0] {
+                let (_temp, mut app) = test_app(&content);
+                let ctx = egui::Context::default();
+                egui_extras::install_image_loaders(&ctx);
+                app.state.theme.apply_to(&ctx);
+                let revision = app.state.active_document().unwrap().revision;
+                let pointer = egui::pos2(x, 350.0);
+                let mut number = 0;
+                for _ in 0..12 {
+                    scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+                }
+                let before = scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+                let first = first_visible_preview_section(&before);
+                scroll_frame(&mut app, &ctx, &mut number, pointer, Some((unit, -delta)));
+                for _ in 0..30 {
+                    scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+                }
+                let after = scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+                assert!(
+                    app.synced_scroll_y > 100.0 && app.preview_sync_line > 0,
+                    "wheel over x={x} ({unit:?}) must scroll the shared document; offset={}, line={}",
+                    app.synced_scroll_y,
+                    app.preview_sync_line
+                );
+                assert!(
+                    first_visible_preview_section(&after) > first,
+                    "the preview must visibly move and stay scrolled"
+                );
+                offsets.push(app.synced_scroll_y);
+                scroll_frame(&mut app, &ctx, &mut number, pointer, Some((unit, delta)));
+                for _ in 0..30 {
+                    scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+                }
+                let returned = scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+                assert!(app.synced_scroll_y < 1.0, "upward wheel must return to top");
+                assert_eq!(first_visible_preview_section(&returned), first);
+                let document = app.state.active_document().unwrap();
+                assert_eq!(document.content, content);
+                assert_eq!(
+                    document.revision, revision,
+                    "scrolling must not edit the note"
+                );
+            }
+            assert!(
+                (offsets[0] - offsets[1]).abs() < 1.0,
+                "the same wheel input must apply once from either pane: {offsets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn split_header_wheel_does_not_scroll_and_preview_only_wheel_still_works() {
+        let content = (0..100)
+            .map(|index| format!("## SECTION {index:04}\n\nPlain paragraph {index:04}.\n\n"))
+            .collect::<String>();
+        let (_temp, mut app) = test_app(&content);
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        app.state.theme.apply_to(&ctx);
+        let mut number = 0;
+        let header = egui::pos2(750.0, 25.0);
+        for _ in 0..12 {
+            scroll_frame(&mut app, &ctx, &mut number, header, None);
+        }
+        scroll_frame(
+            &mut app,
+            &ctx,
+            &mut number,
+            header,
+            Some((egui::MouseWheelUnit::Point, -320.0)),
+        );
+        for _ in 0..30 {
+            scroll_frame(&mut app, &ctx, &mut number, header, None);
+        }
+        assert_eq!(app.synced_scroll_y, 0.0, "toolbar input is not pane input");
+        app.state.mode = EditorMode::Preview;
+        let pointer = egui::pos2(750.0, 350.0);
+        for _ in 0..12 {
+            scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+        }
+        let before = scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+        scroll_frame(
+            &mut app,
+            &ctx,
+            &mut number,
+            pointer,
+            Some((egui::MouseWheelUnit::Point, -320.0)),
+        );
+        for _ in 0..30 {
+            scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+        }
+        let after = scroll_frame(&mut app, &ctx, &mut number, pointer, None);
+        assert!(first_visible_preview_section(&after) > first_visible_preview_section(&before));
+        assert_eq!(
+            app.synced_scroll_y, 0.0,
+            "Preview mode scrolls independently"
+        );
     }
 
     #[test]
