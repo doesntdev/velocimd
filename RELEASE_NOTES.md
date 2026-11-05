@@ -33,12 +33,12 @@
 - Reproducible paired CPU probes and their measurement limits are documented in [PERFORMANCE.md](https://github.com/doesntdev/velocimd/blob/main/PERFORMANCE.md). CPU pane timings are not GPU presentation or end-to-end typing-latency measurements.
 - No new application dependencies, services, database, account, or network requirement. The ordinary Markdown files-and-folders model and minimalist interface remain unchanged.
 - The separate navigation/sidebar work and headless-render CLI PR are not included in this release candidate.
-- Windows folder-picker handling has source and nonmodal regression coverage, but native Windows compilation and interactive desktop behavior remain unverified in this Linux development environment.
+- Windows folder-picker handling has source and nonmodal regression coverage. The release workflow builds and tests on native platform runners; this is not a substitute for testing the interactive Windows picker on a Windows desktop.
 
 ## Packages
 
 The existing release workflow produces Linux `.deb`, `.AppImage`, and Arch package/PKGBUILD assets, a universal macOS `.dmg`, and a Windows x64 NSIS installer, plus `SHA256SUMS`.
 
-This source preparation does not itself publish downloadable v0.1.6 packages. The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native GUI interaction is exercised on Linux; compilation or package generation alone does not certify Windows/macOS GUI behavior. WASM compilation does not imply browser filesystem/dialog support.
+Package checksums are supplied in `SHA256SUMS`. The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native GUI interaction is exercised on Linux; compilation or package generation alone does not certify Windows/macOS GUI behavior. WASM compilation does not imply browser filesystem/dialog support.
 
 **Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.5...v0.1.6
