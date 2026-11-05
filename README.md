@@ -12,13 +12,13 @@ small command surface that stays out of the way.
 - Folder tabs: each tab represents a working folder, with Markdown files and
   child folders available from the tab menu.
 - Markdown-only workflow with `.md` extensions hidden in the UI where possible.
-- Split, editor-only, and preview-only modes.
+- Edit–Split–View controls, with a draggable Split divider that remembers its position.
 - Debounced autosave with staged file replacement and failed-save draft recovery.
 - Searchable command palette with keyboard navigation.
 - Line-numbered editor with synchronized preview positioning.
 - Native preview rendering with code highlighting, local images, and Mermaid
   flowchart support.
-- Dark and light themes: `Velocidark` and `Velocilight`.
+- One light/dark theme toggle, with the existing explicit theme shortcuts retained.
 - Icon command bar with hover tooltips and keyboard shortcuts.
 - Local app state persistence for open documents, recent files, folders, and
   theme selection.
@@ -87,6 +87,16 @@ cargo run --release
 On first launch, choose a working folder. New Markdown files are saved there by
 default, and folder tabs let you switch between working directories. The `+`
 command creates a new Markdown file in the active folder.
+
+Drag the line between editor and preview to resize Split view. The proportion is
+saved with the session; double-click the divider to return to 50/50. Both panes
+retain a usable width when resizing the window. The toolbar theme toggle preserves
+your editor/preview font sizes; the header no longer displays the theme name.
+
+Native file/folder dialogs are owned by the app window. Windows lets the Shell
+choose its starting directory rather than passing stored canonical/verbatim paths.
+Picker failures are shown explicitly; cancellation leaves the current note and
+folder unchanged.
 
 Open an existing Markdown file with `Ctrl+O`, or pass files on startup:
 
@@ -161,6 +171,20 @@ Requires `Xvfb`, `xvfb-run`, `xdotool`, and ImageMagick. Results and screenshots
 are written to the ignored `target/native-smoke/` directory. See
 [stabilization notes](docs/stabilization.md) for coverage and remaining limitations.
 
+The desktop-controls smoke checks the actual toolbar, divider drag/reset and
+saved-layout reopen. With Zenity installed, the opt-in picker case opens and selects
+an owned temporary folder, entirely inside the private Xvfb display:
+
+```bash
+python3 scripts/desktop-controls-smoke.py
+python3 scripts/desktop-controls-smoke.py --native-picker
+```
+
+Evidence is written under ignored `target/desktop-controls/`. On Windows, run
+`cargo check --locked --all-targets` and `cargo test --locked` for native code and
+nonmodal component/state tests. An interactive Windows folder-picker test still
+requires a Windows desktop; Linux native QA does not establish Windows behavior.
+
 Performance verification uses the same project toolchain:
 
 ```bash
@@ -179,6 +203,7 @@ The main app modules are:
 - `src/ui.rs`: egui application shell and editor/preview layout.
 - `src/ui/editor_layout.rs`: shared revision/width/font-aware editor layouts.
 - `src/ui/preview.rs`: retained semantic preview blocks and viewport rendering.
+- `src/ui/splitter.rs`: bounded draggable Split layout and reset behavior.
 - `src/ui/persistence.rs`: UI save scheduling and revision-aware completion.
 - `src/persistence.rs`: ordered native document/session writer and WASM fallback.
 - `src/app_state.rs`: documents, folder tabs, saving, recent files, and state

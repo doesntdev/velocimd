@@ -11,6 +11,7 @@ pub enum Command {
     TogglePalette,
     SetMode(EditorMode),
     CycleMode,
+    ToggleTheme,
     SwitchThemeLight,
     SwitchThemeDark,
 }
@@ -29,6 +30,7 @@ impl Command {
             Self::SetMode(EditorMode::Preview) => "Switch to preview mode",
             Self::SetMode(EditorMode::Split) => "Switch to split view",
             Self::CycleMode => "Cycle edit / preview / split",
+            Self::ToggleTheme => "Toggle light/dark theme",
             Self::SwitchThemeLight => "Switch to light theme",
             Self::SwitchThemeDark => "Switch to dark theme",
         }
@@ -47,6 +49,7 @@ impl Command {
             Self::SetMode(EditorMode::Preview) => "Ctrl+2",
             Self::SetMode(EditorMode::Split) => "Ctrl+3",
             Self::CycleMode => "Ctrl+Tab",
+            Self::ToggleTheme => "",
             Self::SwitchThemeLight => "Alt+L",
             Self::SwitchThemeDark => "Alt+D",
         }
@@ -65,6 +68,7 @@ impl Command {
             Self::SetMode(EditorMode::Preview) => "[P]",
             Self::SetMode(EditorMode::Split) => "[/]",
             Self::CycleMode => "[>]",
+            Self::ToggleTheme => "[T]",
             Self::SwitchThemeLight => "[L]",
             Self::SwitchThemeDark => "[D]",
         }
@@ -85,6 +89,7 @@ impl Command {
             Self::TogglePalette,
             Self::SwitchThemeLight,
             Self::SwitchThemeDark,
+            Self::ToggleTheme,
         ]
     }
 
@@ -121,11 +126,10 @@ impl Command {
             Self::SaveFileAs,
             Self::CloseFolderTab,
             Self::SetMode(EditorMode::Edit),
-            Self::SetMode(EditorMode::Preview),
             Self::SetMode(EditorMode::Split),
+            Self::SetMode(EditorMode::Preview),
             Self::CycleMode,
-            Self::SwitchThemeLight,
-            Self::SwitchThemeDark,
+            Self::ToggleTheme,
         ]
     }
 }

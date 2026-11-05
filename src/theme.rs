@@ -23,7 +23,7 @@ pub struct DesignTokens {
 
 impl DesignTokens {
     pub fn from_theme(theme: &ThemeConfig) -> Self {
-        if theme.name.to_lowercase().contains("light") {
+        if theme.is_light() {
             Self::zed_light()
         } else {
             Self::zed_dark()
@@ -120,11 +120,26 @@ impl ThemeConfig {
         }
     }
 
+    pub fn is_light(&self) -> bool {
+        self.name.to_lowercase().contains("light")
+    }
+
+    pub fn toggled(&self) -> Self {
+        let mut next = if self.is_light() {
+            Self::default_dark()
+        } else {
+            Self::default_light()
+        };
+        next.editor_font_size = self.editor_font_size;
+        next.preview_font_size = self.preview_font_size;
+        next
+    }
+
     pub fn apply_to(&self, ctx: &EguiContext) {
         let tokens = DesignTokens::from_theme(self);
         let editor_font_size = safe_font_size(self.editor_font_size, default_editor_font_size());
         let preview_font_size = safe_font_size(self.preview_font_size, default_preview_font_size());
-        let mut visuals = if self.name.to_lowercase().contains("light") {
+        let mut visuals = if self.is_light() {
             Visuals::light()
         } else {
             Visuals::dark()
