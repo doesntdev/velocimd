@@ -1,4 +1,23 @@
-# Velocimd performance implementation plan
+# Velocimd performance implementation and verification
+
+## v0.1.6 integration
+
+The performance implementation and both subsequent input fixes are included in the
+v0.1.6 release candidate. The implementation was committed as `137aa2e`; `316eb8c`
+adds shared scrolling from the Split preview, and `f01a398` prevents theme shortcuts
+from inserting text into a focused editor. The development candidate passed 127
+tests, strict Clippy, native compilation and wasm32 compilation. Native tests cover
+right-pane wheel scrolling and both theme shortcuts in Edit/Split, with exact note
+preservation and ordinary typing as a positive control.
+
+The plan and qualification records below are historical evidence for the original
+v0.1.5-based performance candidate. Their 122-test count predates the five input
+regressions added afterward. Paths under `target/` and local scratch are local
+verification receipts, not distributed assets; the source regressions and reusable
+performance/native smoke scripts are included in the repository. No Windows/macOS
+GUI certification or end-to-end input-latency claim is made.
+
+## Original implementation plan
 
 > **For Hermes:** Use the subagent-driven-development workflow with controller-owned integration and independent specification then quality review of the frozen combined candidate.
 
@@ -81,7 +100,7 @@ Controller permits only one outstanding document batch, prepares the next revisi
 - Freeze full source/tests candidate; independent SPEC PASS followed by independent QUALITY approval, fix findings with regressions and requalify changed coverage before reporting all items complete.
 - No push, tag, release, installation or Graphify refresh is authorized by this implementation request.
 
-## Current status
+## Original candidate qualification (historical)
 
 All requested implementation paths are assembled locally. Successor candidate v2 repairs blocking finding QUALITY-001 from the independent quality review of v1. The rejected source, reports, original 3-second timeout proof, and exact v1 native binary remain retained. The repair counts newline bytes from egui row metadata, enforces positive UTF-8 progress, and uses canonical whole-text layout rather than inventing a corrupt byte boundary if the engine cannot expose a consuming prefix. Fragment geometry is checked against whole layout, including blank boundary rows.
 

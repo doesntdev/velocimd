@@ -161,9 +161,26 @@ Requires `Xvfb`, `xvfb-run`, `xdotool`, and ImageMagick. Results and screenshots
 are written to the ignored `target/native-smoke/` directory. See
 [stabilization notes](docs/stabilization.md) for coverage and remaining limitations.
 
+Performance verification uses the same project toolchain:
+
+```bash
+python3 scripts/performance-probe.py --rounds 4
+python3 scripts/performance-smoke.py
+```
+
+The paired CPU probe requires Python 3.11+ and the Rust toolchain. The Linux native
+performance smoke additionally requires Pillow and Tesseract, plus the native
+smoke tools above. Evidence is written under ignored `target/performance-execution/`.
+See [PERFORMANCE.md](PERFORMANCE.md) for scope, historical measurements, and limits;
+CPU pane timings are not GPU presentation or end-to-end typing latency.
+
 The main app modules are:
 
 - `src/ui.rs`: egui application shell and editor/preview layout.
+- `src/ui/editor_layout.rs`: shared revision/width/font-aware editor layouts.
+- `src/ui/preview.rs`: retained semantic preview blocks and viewport rendering.
+- `src/ui/persistence.rs`: UI save scheduling and revision-aware completion.
+- `src/persistence.rs`: ordered native document/session writer and WASM fallback.
 - `src/app_state.rs`: documents, folder tabs, saving, recent files, and state
   persistence.
 - `src/markdown.rs`: Markdown-to-HTML helper used by tests/export-style code.
