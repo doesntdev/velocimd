@@ -257,6 +257,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let notes = temp.path().join("notes");
         fs::create_dir(&notes).unwrap();
+        // Match the canonical folder keys restored by AppState on every OS.
+        let notes = fs::canonicalize(notes).unwrap();
         let file = notes.join("first.md");
         fs::write(&file, "disk").unwrap();
         let mut state = AppState::fresh();
@@ -415,7 +417,7 @@ mod tests {
         release.send(()).unwrap();
         let selected = temp.path().join("notes/Other");
         app.save_to_selected_path(&ctx, selected);
-        let new = temp.path().join("notes/Other.md");
+        let new = fs::canonicalize(temp.path().join("notes/Other.md")).unwrap();
         assert_eq!(app.state.documents[0].path.as_ref(), Some(&new));
         assert_eq!(fs::read_to_string(&old).unwrap(), "queued old target");
         assert_eq!(fs::read_to_string(&new).unwrap(), "latest for new target");

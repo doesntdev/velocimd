@@ -1300,8 +1300,20 @@ mod tests {
 
     #[test]
     fn whole_split_editor_end_jump_has_bounded_passes_during_refinement() {
+        use egui::os::OperatingSystem;
+        for os in [
+            OperatingSystem::Mac,
+            OperatingSystem::Windows,
+            OperatingSystem::Nix,
+        ] {
+            assert_whole_split_editor_end_jump(os);
+        }
+    }
+
+    fn assert_whole_split_editor_end_jump(os: egui::os::OperatingSystem) {
         use crate::{app_state::AppState, document::Document, ui::VelocimdApp};
         let ctx = egui::Context::default();
+        ctx.set_os(os);
         let mut state = AppState::fresh();
         state.theme = crate::theme::ThemeConfig::default_dark();
         let begin = "# NOTE 000 BEGIN\n\n";
@@ -1351,11 +1363,23 @@ mod tests {
                     },
                 ],
                 3 => vec![egui::Event::Key {
-                    key: egui::Key::End,
+                    key: if os == egui::os::OperatingSystem::Mac {
+                        egui::Key::ArrowDown
+                    } else {
+                        egui::Key::End
+                    },
                     physical_key: None,
                     pressed: true,
                     repeat: false,
-                    modifiers: egui::Modifiers::CTRL,
+                    modifiers: if os == egui::os::OperatingSystem::Mac {
+                        egui::Modifiers {
+                            mac_cmd: true,
+                            command: true,
+                            ..Default::default()
+                        }
+                    } else {
+                        egui::Modifiers::CTRL
+                    },
                 }],
                 _ => vec![],
             };
@@ -1915,15 +1939,46 @@ mod tests {
 
     #[test]
     fn local_image_loader_resize_updates_height_without_a_source_revision() {
+        fn fixture_source(path: &str) -> (String, String) {
+            let path = path.replace('\\', "/");
+            let prefix = if path.starts_with('/') { "" } else { "/" };
+            let uri = format!("file://{prefix}{path}");
+            // Angle delimiters preserve spaces; URL separators avoid Markdown
+            // treating a Windows backslash before punctuation as an escape.
+            let source = format!("![fixture](<{uri}>)\n\nfollowing paragraph");
+            (source, uri)
+        }
+
+        for (path, expected_uri) in [
+            (
+                r"C:\Users\runneradmin\AppData\Local\Temp\.tmpfixture\preview.png",
+                "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmpfixture/preview.png",
+            ),
+            (
+                "/tmp/fixture notes/preview.png",
+                "file:///tmp/fixture notes/preview.png",
+            ),
+        ] {
+            let (source, uri) = fixture_source(path);
+            assert_eq!(uri, expected_uri);
+            assert_eq!(
+                split_preview_segments(&source)[0].images,
+                [uri],
+                "the rendered fixture and explicit loader must use the same image URI"
+            );
+        }
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("preview.png");
         image::RgbaImage::from_pixel(80, 40, image::Rgba([20, 40, 60, 255]))
             .save(&path)
             .unwrap();
-        let source = format!("![fixture]({})\n\nfollowing paragraph", path.display());
+        let (source, uri) = fixture_source(path.to_str().unwrap());
+        assert_eq!(
+            split_preview_segments(&source)[0].images.as_slice(),
+            std::slice::from_ref(&uri)
+        );
         let ctx = egui::Context::default();
         let mut renderer = PreviewRenderer::default();
-        let uri = format!("file://{}", path.display());
         for _ in 0..100 {
             frame(&ctx, &mut renderer, &source, 1, 640.0, None, None);
             if matches!(
