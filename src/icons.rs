@@ -16,6 +16,7 @@ pub enum Icon {
     Eye,
     Columns,
     Rotate,
+    Theme,
     Sun,
     Moon,
     Check,
@@ -36,6 +37,7 @@ impl Icon {
             Command::SetMode(EditorMode::Preview) => Self::Eye,
             Command::SetMode(EditorMode::Split) => Self::Columns,
             Command::CycleMode => Self::Rotate,
+            Command::ToggleTheme => Self::Theme,
             Command::SwitchThemeLight => Self::Sun,
             Command::SwitchThemeDark => Self::Moon,
         }
@@ -55,6 +57,7 @@ impl Icon {
             Self::Eye => egui::include_image!("../assets/icons/toolbar/preview.svg"),
             Self::Columns => egui::include_image!("../assets/icons/toolbar/split.svg"),
             Self::Rotate => egui::include_image!("../assets/icons/toolbar/cycle.svg"),
+            Self::Theme => egui::include_image!("../assets/icons/toolbar/theme.svg"),
             Self::Sun => egui::include_image!("../assets/icons/toolbar/sun.svg"),
             Self::Moon => egui::include_image!("../assets/icons/toolbar/moon.svg"),
             Self::Check => egui::include_image!("../assets/icons/toolbar/check.svg"),

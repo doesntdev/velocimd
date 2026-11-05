@@ -31,6 +31,8 @@ pub struct AppState {
     #[serde(default)]
     pub active_folder_tab: usize,
     pub mode: EditorMode,
+    #[serde(default = "default_split_ratio")]
+    pub split_ratio: f32,
     pub command_palette_open: bool,
     pub command_query: String,
     pub theme: ThemeConfig,
@@ -59,6 +61,8 @@ pub(crate) struct PersistedAppState {
     active_folder_tab: usize,
     #[serde(default)]
     mode: EditorMode,
+    #[serde(default = "default_split_ratio")]
+    split_ratio: f32,
     #[serde(default)]
     command_palette_open: bool,
     #[serde(default)]
@@ -98,6 +102,7 @@ impl PersistedAppState {
             folder_tabs: state.folder_tabs.clone(),
             active_folder_tab: state.active_folder_tab,
             mode: state.mode,
+            split_ratio: normalize_split_ratio(state.split_ratio),
             command_palette_open: false,
             command_query: String::new(),
             theme: state.theme.clone(),
@@ -122,6 +127,7 @@ impl PersistedAppState {
             folder_tabs: self.folder_tabs,
             active_folder_tab: self.active_folder_tab,
             mode: self.mode,
+            split_ratio: normalize_split_ratio(self.split_ratio),
             command_palette_open: self.command_palette_open,
             command_query: self.command_query,
             theme: self.theme,
@@ -226,6 +232,7 @@ impl AppState {
             folder_tabs: Vec::new(),
             active_folder_tab: 0,
             mode: EditorMode::Split,
+            split_ratio: default_split_ratio(),
             command_palette_open: false,
             command_query: String::new(),
             theme,
@@ -299,7 +306,12 @@ impl AppState {
     }
 
     pub fn save_theme(&self) -> Result<()> {
-        let path = Self::theme_path()?;
+        let path = if let Some(folder) = self.storage_path.as_deref().and_then(Path::parent) {
+            fs::create_dir_all(folder)?;
+            folder.join("theme.toml")
+        } else {
+            Self::theme_path()?
+        };
         self.theme.save_to(path)
     }
 
@@ -507,6 +519,7 @@ impl AppState {
             Command::TogglePalette => self.command_palette_open = !self.command_palette_open,
             Command::SetMode(mode) => self.mode = mode,
             Command::CycleMode => self.mode = self.mode.next(),
+            Command::ToggleTheme => self.theme = self.theme.toggled(),
             Command::SelectWorkingFolder
             | Command::OpenFile
             | Command::SaveFile
@@ -857,6 +870,18 @@ pub struct SaveDirtyDocumentsResult {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn default_split_ratio() -> f32 {
+    0.5
+}
+
+pub(crate) fn normalize_split_ratio(ratio: f32) -> f32 {
+    if ratio.is_finite() {
+        ratio.clamp(0.15, 0.85)
+    } else {
+        default_split_ratio()
     }
 }
 

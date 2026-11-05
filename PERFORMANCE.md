@@ -5,13 +5,18 @@
 The performance implementation and both subsequent input fixes are included in the
 v0.1.6 release candidate. The implementation was committed as `137aa2e`; `316eb8c`
 adds shared scrolling from the Split preview, and `f01a398` prevents theme shortcuts
-from inserting text into a focused editor. The development candidate passed 127
+from inserting text into a focused editor. That performance/input integration candidate passed 127
 tests, strict Clippy, native compilation and wasm32 compilation. Native tests cover
 right-pane wheel scrolling and both theme shortcuts in Edit/Split, with exact note
 preservation and ordinary typing as a positive control. Release integration also
 consumes theme input when a higher-priority command arrives in the same frame;
 the focused-editor regression covers both input orders with mode/Save commands,
 including unchanged selected text, revision, autosave state, and saved bytes.
+
+Subsequent desktop controls add the saved draggable divider, unified theme toggle,
+toolbar ordering and picker handling described in README.md and RELEASE_NOTES.md.
+Their additional regressions do not change the historical performance measurements
+or the source-bound test counts recorded below.
 
 The plan and qualification records below are historical evidence for the original
 v0.1.5-based performance candidate. Their 122-test count predates the five input

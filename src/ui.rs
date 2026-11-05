@@ -5,8 +5,11 @@ use crate::{
     modes::EditorMode,
     theme::{DesignTokens, ThemeConfig},
 };
+#[cfg(test)]
+mod desktop_controls_tests;
 mod editor_layout;
 mod persistence;
+mod splitter;
 use editor_layout::EditorLayoutCache;
 
 use eframe::{App, CreationContext, Frame, egui};
@@ -172,6 +175,9 @@ pub struct VelocimdApp {
     file_name_editor_document_id: Option<u64>,
     file_name_editor_text: String,
     status_message: Option<String>,
+    dialog_error: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    file_dialog_builder: FileDialogBuilder,
     palette_selection: usize,
     palette_focus_requested: bool,
 }
@@ -210,6 +216,9 @@ impl VelocimdApp {
             file_name_editor_document_id: None,
             file_name_editor_text: String::new(),
             status_message: None,
+            dialog_error: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            file_dialog_builder: FileDialogBuilder::default(),
             palette_selection: 0,
             palette_focus_requested: false,
         }
@@ -259,6 +268,9 @@ impl VelocimdApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.dialog_error.is_some() {
+            return;
+        }
         let command = ctx.input_mut(|input| {
             let shortcut = |modifiers, key| egui::KeyboardShortcut::new(modifiers, key);
             let command = egui::Modifiers::COMMAND;
@@ -438,18 +450,6 @@ impl VelocimdApp {
                                     .truncate(),
                                 );
                             });
-                        } else {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(format!(
-                                        "Theme: {}",
-                                        self.state.theme.name
-                                    ))
-                                    .small()
-                                    .color(tokens.text_muted),
-                                )
-                                .truncate(),
-                            );
                         }
                     });
                 });
@@ -579,11 +579,24 @@ impl VelocimdApp {
                 for command in Command::toolbar() {
                     let active =
                         matches!(command, Command::SetMode(mode) if *mode == self.state.mode);
+                    let tooltip_command = if *command == Command::ToggleTheme {
+                        if self.state.theme.is_light() {
+                            Command::SwitchThemeDark
+                        } else {
+                            Command::SwitchThemeLight
+                        }
+                    } else {
+                        *command
+                    };
                     let response = icon_button(
                         ui,
                         Icon::for_command(*command),
                         active,
-                        format!("{} ({})", command.label(), command.shortcut()),
+                        format!(
+                            "{} ({})",
+                            tooltip_command.label(),
+                            tooltip_command.shortcut()
+                        ),
                     );
                     if response.clicked() {
                         self.run_command(ctx, *command);
@@ -1003,29 +1016,44 @@ impl VelocimdApp {
                     self.preview_pane(ui, false);
                 }
                 EditorMode::Split => {
-                    ui.columns(2, |columns| {
-                        let preview = &columns[1];
-                        if preview.is_enabled()
-                            && preview.rect_contains_pointer(preview.available_rect_before_wrap())
-                            && ctx.dragged_id().is_none()
-                        {
-                            // The editor owns Split's source position. Feed wheel input from
-                            // the preview into that ScrollArea instead of letting it snap back.
-                            // Preserve egui's smoothing and consume the vertical delta once.
-                            let delta = preview.input_mut(|input| {
-                                std::mem::take(&mut input.smooth_scroll_delta.y)
-                            });
-                            if delta != 0.0 {
-                                columns[0].scroll_with_delta_animation(
-                                    egui::vec2(0.0, delta),
-                                    egui::style::ScrollAnimation::none(),
-                                );
-                            }
+                    let layout = splitter::show(ui, self.state.split_ratio, self.tokens());
+                    if let Some(ratio) = layout.changed_ratio {
+                        self.state.split_ratio = ratio;
+                        self.persist_state();
+                    }
+                    let mut editor = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt("split_editor")
+                            .max_rect(layout.editor)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    editor.set_clip_rect(layout.editor.intersect(ui.clip_rect()));
+                    let mut preview = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt("split_preview")
+                            .max_rect(layout.preview)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    preview.set_clip_rect(layout.preview.intersect(ui.clip_rect()));
+                    if preview.is_enabled()
+                        && preview.rect_contains_pointer(preview.available_rect_before_wrap())
+                        && ctx.dragged_id().is_none()
+                    {
+                        // The editor owns Split's source position. Feed wheel input from
+                        // the preview into that ScrollArea instead of letting it snap back.
+                        // Preserve egui's smoothing and consume the vertical delta once.
+                        let delta = preview
+                            .input_mut(|input| std::mem::take(&mut input.smooth_scroll_delta.y));
+                        if delta != 0.0 {
+                            editor.scroll_with_delta_animation(
+                                egui::vec2(0.0, delta),
+                                egui::style::ScrollAnimation::none(),
+                            );
                         }
-                        self.editor_pane(&mut columns[0], ctx, true);
+                    }
+                    self.editor_pane(&mut editor, ctx, true);
 
-                        self.preview_pane(&mut columns[1], true);
-                    });
+                    self.preview_pane(&mut preview, true);
                 }
             },
         );
@@ -1042,6 +1070,7 @@ impl VelocimdApp {
                 self.persist_state();
             }
             Command::SaveFileAs => self.save_file_as(ctx),
+            Command::ToggleTheme => self.switch_theme(ctx, self.state.theme.toggled()),
             Command::SwitchThemeLight => self.switch_theme(ctx, ThemeConfig::default_light()),
             Command::SwitchThemeDark => self.switch_theme(ctx, ThemeConfig::default_dark()),
             Command::TogglePalette => {
@@ -1071,14 +1100,71 @@ impl VelocimdApp {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn file_dialog(&self) -> FileDialogBuilder {
+        let builder = self.file_dialog_builder.clone();
+        // Shell folder initialization can reject stale or verbatim Windows paths
+        // before Show. Keep canonical model paths intact and let Shell use history.
+        #[cfg(target_os = "windows")]
+        {
+            builder
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let location = dialog_location(&self.state);
+            if location.is_dir() {
+                builder.set_location(&location)
+            } else {
+                builder
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dialog_selection(
+        &mut self,
+        ctx: &egui::Context,
+        operation: &str,
+        result: native_dialog::Result<Option<PathBuf>>,
+    ) -> Option<PathBuf> {
+        match result {
+            Ok(Some(path)) => {
+                self.dialog_error = None;
+                Some(path)
+            }
+            Ok(None) => None,
+            Err(error) => {
+                let message = format!("Could not {operation}: {error}");
+                log::error!("{message}; {error:?}");
+                self.dialog_error = Some(message);
+                ctx.request_repaint();
+                None
+            }
+        }
+    }
+
+    fn show_dialog_error(&mut self, ctx: &egui::Context) {
+        let Some(message) = self.dialog_error.clone() else {
+            return;
+        };
+        let response = egui::Modal::new(egui::Id::new("file_dialog_error")).show(ctx, |ui| {
+            ui.set_max_width(400.0);
+            ui.heading("File dialog failed");
+            ui.colored_label(self.tokens().danger, message);
+            ui.button("OK").clicked()
+        });
+        if response.inner || response.should_close() {
+            self.dialog_error = None;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn select_folder_tab(&mut self, ctx: &egui::Context) {
-        let location = dialog_location(&self.state);
-        let selected = FileDialogBuilder::default()
+        let result = self
+            .file_dialog()
             .set_title("Open Folder Tab")
-            .set_location(&location)
             .open_single_dir()
-            .show()
-            .unwrap_or(None);
+            .show();
+        let selected = self.dialog_selection(ctx, "open the folder picker", result);
 
         if let Some(path) = selected {
             if self.state.add_folder_tab(path.clone()) {
@@ -1094,13 +1180,12 @@ impl VelocimdApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn select_working_folder(&mut self, ctx: &egui::Context) {
-        let location = dialog_location(&self.state);
-        let selected = FileDialogBuilder::default()
+        let result = self
+            .file_dialog()
             .set_title("Select Working Folder")
-            .set_location(&location)
             .open_single_dir()
-            .show()
-            .unwrap_or(None);
+            .show();
+        let selected = self.dialog_selection(ctx, "select the working folder", result);
 
         if let Some(path) = selected {
             self.finish_background_writes();
@@ -1129,14 +1214,13 @@ impl VelocimdApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn open_file(&mut self, ctx: &egui::Context) {
-        let location = dialog_location(&self.state);
-        let selected = FileDialogBuilder::default()
+        let result = self
+            .file_dialog()
             .set_title("Open Markdown File")
-            .set_location(&location)
             .add_filter("Markdown", ["md", "markdown"])
             .open_single_file()
-            .show()
-            .unwrap_or(None);
+            .show();
+        let selected = self.dialog_selection(ctx, "open the Markdown picker", result);
 
         if let Some(path) = selected {
             self.open_markdown_file(ctx, path);
@@ -1145,20 +1229,19 @@ impl VelocimdApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn save_file_as(&mut self, ctx: &egui::Context) {
-        let location = dialog_location(&self.state);
         let filename = self
             .state
             .active_document()
             .map(|document| document.title.clone())
             .unwrap_or_else(|| "Untitled.md".to_string());
-        let selected = FileDialogBuilder::default()
+        let result = self
+            .file_dialog()
             .set_title("Save Markdown File")
-            .set_location(&location)
             .set_filename(filename)
             .add_filter("Markdown", ["md", "markdown"])
             .save_single_file()
-            .show()
-            .unwrap_or(None);
+            .show();
+        let selected = self.dialog_selection(ctx, "open the Save As dialog", result);
         if let Some(path) = selected {
             self.save_to_selected_path(ctx, path);
         }
@@ -1219,8 +1302,14 @@ impl VelocimdApp {
 }
 
 impl App for VelocimdApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame) {
         let ctx = ui.ctx().clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.file_dialog_builder = FileDialogBuilder::default().set_owner(frame);
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = frame;
         self.process_deferred_work(&ctx);
         if !self.theme_applied {
             self.state.theme.apply_to(&ctx);
@@ -1243,6 +1332,7 @@ impl App for VelocimdApp {
                 self.workspace(ui, &ctx);
             });
         self.command_palette(&ctx);
+        self.show_dialog_error(&ctx);
     }
 }
 
@@ -1394,7 +1484,7 @@ fn line_for_char_index(text: &str, char_index: usize) -> usize {
     line
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))]
 fn dialog_location(state: &AppState) -> PathBuf {
     state
         .working_folder
@@ -1592,7 +1682,7 @@ mod preview_sync_tests {
         );
     }
 
-    fn test_app(content: &str) -> (tempfile::TempDir, VelocimdApp) {
+    pub(super) fn test_app(content: &str) -> (tempfile::TempDir, VelocimdApp) {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("state.json");
         let mut state = AppState::fresh();
