@@ -14,6 +14,12 @@ pub struct Document {
     pub dirty: bool,
     #[serde(default)]
     pub revision: u64,
+    /// False only for a clean file-backed body deferred during session restore.
+    /// An unloaded body is not an empty document and must never be written.
+    #[serde(skip, default = "loaded_by_default")]
+    pub loaded: bool,
+    #[serde(skip)]
+    pub(crate) identity_revision: u64,
 }
 
 impl Document {
@@ -25,10 +31,13 @@ impl Document {
             content: content.into(),
             dirty: false,
             revision: 0,
+            loaded: true,
+            identity_revision: 0,
         }
     }
 
     pub fn from_path(path: PathBuf, content: impl Into<String>) -> Self {
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
         let title = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -42,19 +51,29 @@ impl Document {
             content: content.into(),
             dirty: false,
             revision: 0,
+            loaded: true,
+            identity_revision: 0,
         }
     }
 
     pub fn set_content(&mut self, content: String) {
-        if self.content != content {
+        let was_loaded = self.loaded;
+        self.loaded = true;
+        if !was_loaded || self.content != content {
             self.content = content;
             self.mark_changed();
         }
     }
 
     pub fn mark_changed(&mut self) {
+        self.loaded = true;
         self.dirty = true;
         self.revision = self.revision.saturating_add(1);
+    }
+
+    pub(crate) fn mark_identity_changed(&mut self) {
+        self.revision = self.revision.saturating_add(1);
+        self.identity_revision = self.revision;
     }
 
     pub fn display_title(&self) -> String {
@@ -90,6 +109,10 @@ impl Document {
 
         advance_next_id_to(max_id.saturating_add(1));
     }
+}
+
+fn loaded_by_default() -> bool {
+    true
 }
 
 fn next_id() -> u64 {

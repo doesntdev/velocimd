@@ -2,16 +2,19 @@ use crate::{
     app_state::AppState,
     commands::Command,
     icons::{Icon, compact_icon_button, icon_button, paint_icon, paint_logo},
-    mermaid::MermaidRenderCache,
     modes::EditorMode,
     theme::{DesignTokens, ThemeConfig},
 };
+mod editor_layout;
+mod persistence;
+use editor_layout::EditorLayoutCache;
+
 use eframe::{App, CreationContext, Frame, egui};
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -33,173 +36,29 @@ const COMMAND_BAR_HEIGHT: f32 = COMMAND_BAR_CONTROL_HEIGHT + COMMAND_BAR_VERTICA
 const AUTOSAVE_DEBOUNCE: Duration = Duration::from_millis(450);
 const STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(900);
 const FOLDER_ENTRY_CACHE_TTL: Duration = Duration::from_secs(2);
+#[cfg(test)]
+thread_local! { static MENU_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct PreviewSyncTarget {
     line: usize,
     anchor: PreviewSyncAnchor,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum PreviewSyncAnchor {
     Top,
     ScreenY(f32),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PreviewSegment {
-    start_line: usize,
-    line_count: usize,
-    kind: PreviewSegmentKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PreviewSegmentKind {
-    Markdown(String),
-    Mermaid(String),
-}
-
-#[derive(Default)]
-pub struct PreviewRenderer {
-    cache: CommonMarkCache,
-    segments: PreviewSegmentCache,
-    mermaid: MermaidRenderCache,
-}
-
-#[derive(Default)]
-struct PreviewSegmentCache {
-    document_id: Option<u64>,
-    revision: u64,
-    segments: Vec<PreviewSegment>,
-}
-
-impl PreviewRenderer {
-    pub fn name(&self) -> &'static str {
-        "egui-commonmark"
-    }
-
-    pub fn supports_code_highlighting(&self) -> bool {
-        true
-    }
-
-    pub fn supports_local_images(&self) -> bool {
-        true
-    }
-
-    pub fn show(&mut self, ui: &mut egui::Ui, markdown: &str, tokens: DesignTokens) {
-        let segments = split_preview_segments(markdown);
-        show_preview_segments(
-            ui,
-            &segments,
-            &mut self.cache,
-            &mut self.mermaid,
-            tokens,
-            None,
-        );
-    }
-
-    fn show_document(
-        &mut self,
-        ui: &mut egui::Ui,
-        document_id: u64,
-        revision: u64,
-        markdown: &str,
-        tokens: DesignTokens,
-        sync_target: Option<PreviewSyncTarget>,
-    ) {
-        if self.segments.document_id != Some(document_id) || self.segments.revision != revision {
-            self.segments.document_id = Some(document_id);
-            self.segments.revision = revision;
-            self.segments.segments = split_preview_segments(markdown);
-        }
-
-        show_preview_segments(
-            ui,
-            &self.segments.segments,
-            &mut self.cache,
-            &mut self.mermaid,
-            tokens,
-            sync_target,
-        );
-    }
-}
-
-fn show_preview_segments(
-    ui: &mut egui::Ui,
-    segments: &[PreviewSegment],
-    commonmark_cache: &mut CommonMarkCache,
-    mermaid_cache: &mut MermaidRenderCache,
-    tokens: DesignTokens,
-    sync_target: Option<PreviewSyncTarget>,
-) {
-    ui.style_mut().url_in_tooltip = true;
-    let margin = egui::Margin::same(PREVIEW_FRAME_MARGIN);
-    let available_size = ui.available_size();
-    let margin_size = egui::vec2(
-        f32::from(PREVIEW_FRAME_MARGIN) * 2.0,
-        f32::from(PREVIEW_FRAME_MARGIN) * 2.0,
-    );
-    let min_inner_size = egui::vec2(
-        (available_size.x - margin_size.x).max(0.0),
-        (available_size.y - margin_size.y).max(0.0),
-    );
-
-    egui::Frame::new()
-        .fill(ui.visuals().widgets.noninteractive.bg_fill)
-        .stroke(egui::Stroke::new(1.0_f32, tokens.border))
-        .corner_radius(6)
-        .inner_margin(margin)
-        .show(ui, |ui| {
-            ui.set_min_size(min_inner_size);
-            let mut pending_sync = sync_target;
-
-            for segment in segments {
-                let PreviewSegment {
-                    start_line,
-                    line_count,
-                    kind,
-                } = segment;
-                let start_y = ui.cursor().top();
-
-                ui.push_id(
-                    ("preview_segment", start_line, line_count),
-                    |ui| match kind {
-                        PreviewSegmentKind::Markdown(markdown) => {
-                            if !markdown.trim().is_empty() {
-                                CommonMarkViewer::new().show(ui, commonmark_cache, markdown);
-                            }
-                        }
-                        PreviewSegmentKind::Mermaid(source) => {
-                            mermaid_cache.render(ui, source, tokens);
-                        }
-                    },
-                );
-
-                if let Some(target) = pending_sync
-                    && line_in_segment(target.line, *start_line, *line_count)
-                {
-                    let end_y = ui.cursor().top();
-                    scroll_preview_line(ui, target, *start_line, *line_count, start_y, end_y);
-                    pending_sync = None;
-                }
-            }
-
-            if let Some(target) = pending_sync {
-                let y = ui.cursor().top();
-                scroll_preview_rect_at(
-                    ui,
-                    target.anchor,
-                    y,
-                    ui.text_style_height(&egui::TextStyle::Body),
-                );
-            }
-        });
-}
+mod preview;
+pub use preview::PreviewRenderer;
+#[cfg(test)]
+use preview::{PREVIEW_BLOCK_WORK, PreviewSegmentKind, split_preview_segments};
 
 #[derive(Default)]
 struct EditorOutcome {
     changed: bool,
-    focused: bool,
     clicked_line: Option<usize>,
     clicked_y: Option<f32>,
     line_count: usize,
@@ -267,11 +126,11 @@ struct FolderEntryCache {
 
 struct CachedFolderEntries {
     loaded_at: Instant,
-    entries: Vec<FolderEntry>,
+    entries: Arc<[FolderEntry]>,
 }
 
 impl FolderEntryCache {
-    fn entries(&mut self, folder: &Path) -> Vec<FolderEntry> {
+    fn entries(&mut self, folder: &Path) -> Arc<[FolderEntry]> {
         let now = Instant::now();
         if let Some(cached) = self.entries.get(folder)
             && now.duration_since(cached.loaded_at) < FOLDER_ENTRY_CACHE_TTL
@@ -279,7 +138,7 @@ impl FolderEntryCache {
             return cached.entries.clone();
         }
 
-        let entries = folder_entries(folder);
+        let entries: Arc<[FolderEntry]> = folder_entries(folder).into();
         self.entries.insert(
             folder.to_path_buf(),
             CachedFolderEntries {
@@ -299,10 +158,13 @@ pub struct VelocimdApp {
     state: AppState,
     preview_renderer: PreviewRenderer,
     line_metadata: LineMetadataCache,
+    editor_layout: EditorLayoutCache,
+    persistence: persistence::UiPersistence,
     folder_entry_cache: FolderEntryCache,
     theme_applied: bool,
     working_folder_prompted: bool,
     synced_scroll_y: f32,
+    editor_sync_geometry: Option<(u64, egui::Rect, Arc<egui::Galley>)>,
     preview_sync_line: usize,
     preview_sync_anchor: PreviewSyncAnchor,
     autosave_due: Option<Instant>,
@@ -334,10 +196,13 @@ impl VelocimdApp {
             state,
             preview_renderer: PreviewRenderer::default(),
             line_metadata: LineMetadataCache::default(),
+            editor_layout: EditorLayoutCache::default(),
+            persistence: persistence::UiPersistence::default(),
             folder_entry_cache: FolderEntryCache::default(),
             theme_applied: true,
             working_folder_prompted: false,
             synced_scroll_y: 0.0,
+            editor_sync_geometry: None,
             preview_sync_line: 0,
             preview_sync_anchor: PreviewSyncAnchor::Top,
             autosave_due: None,
@@ -789,14 +654,26 @@ impl VelocimdApp {
             proposed_title
         };
 
-        let renamed_path = self.state.rename_document(document_index, rename_title);
+        let rename_title = rename_title.to_owned();
+        self.finish_background_writes();
+        let old_path = self
+            .state
+            .documents
+            .get(document_index)
+            .and_then(|document| document.path.clone());
+        let renamed_path = self.state.rename_document(document_index, &rename_title);
         if let Some(document) = self.state.documents.get(document_index) {
             self.file_name_editor_text = document.visible_title();
         }
 
         match renamed_path {
             Some(path) => {
-                self.invalidate_folder_for_path(&path);
+                if old_path.as_ref() != Some(&path) {
+                    if let Some(old) = &old_path {
+                        self.invalidate_folder_for_path(old);
+                    }
+                    self.invalidate_folder_for_path(&path);
+                }
                 self.status_message = Some(format!("Renamed {}", short_path(&path)));
             }
             None => self.status_message = Some("Rename failed".to_string()),
@@ -807,7 +684,6 @@ impl VelocimdApp {
     fn editor_content(&mut self, ui: &mut egui::Ui, min_height: f32) -> EditorOutcome {
         let tokens = self.tokens();
         let editor_font = egui::TextStyle::Monospace.resolve(ui.style());
-        let row_height = ui.fonts_mut(|fonts| fonts.row_height(&editor_font));
         let editor_margin = f32::from(EDITOR_TEXT_MARGIN);
         let Some((line_count, text_height, visible_rows, gutter_width)) =
             self.state.active_document().map(|document| {
@@ -820,12 +696,15 @@ impl VelocimdApp {
                 let gutter_width = editor_gutter_width(digit_count);
                 let wrap_width =
                     (ui.available_width() - gutter_width - 1.0 - editor_margin * 2.0).max(1.0);
-                let visible_rows =
-                    editor_visual_rows(ui, &document.content, &editor_font, wrap_width, row_height)
-                        .max(line_count)
-                        .max(1);
-                let text_height =
-                    min_height.max(row_height * visible_rows as f32 + editor_margin * 2.0);
+                let galley = self.editor_layout.layout(
+                    ui,
+                    (document.id, document.revision),
+                    &document.content,
+                    &editor_font,
+                    wrap_width,
+                );
+                let visible_rows = galley.rows.len().max(line_count).max(1);
+                let text_height = min_height.max(galley.size().y + editor_margin * 2.0);
 
                 (line_count, text_height, visible_rows, gutter_width)
             })
@@ -867,6 +746,11 @@ impl VelocimdApp {
             egui::pos2(separator_x + 1.0, outer_rect.top()),
             outer_rect.right_bottom(),
         );
+        let layout = &mut self.editor_layout;
+        let identity = (document.id, document.revision);
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width: f32| {
+            layout.layout(ui, identity, text.as_str(), &editor_font, width)
+        };
         let text_output = ui
             .scope_builder(
                 egui::UiBuilder::new()
@@ -884,6 +768,7 @@ impl VelocimdApp {
                                 .inner_margin(egui::Margin::same(EDITOR_TEXT_MARGIN)),
                         )
                         .lock_focus(true)
+                        .layouter(&mut layouter)
                         .min_size(text_rect.size())
                         .show(ui)
                 },
@@ -894,12 +779,21 @@ impl VelocimdApp {
             egui::pos2(gutter_rect.left() + 8.0, gutter_rect.top()),
             egui::pos2(gutter_rect.right() - 8.0, gutter_rect.bottom()),
         );
-        let gutter_painter = painter.with_clip_rect(gutter_inner);
-        let mut line_number = 1;
-        let mut number_next_row = true;
-        for row in &text_output.galley.rows {
-            if number_next_row && line_number <= line_count {
-                let y = text_output.galley_pos.y + row.pos.y;
+        let gutter_clip = gutter_inner.intersect(ui.clip_rect());
+        let gutter_painter = painter.with_clip_rect(gutter_clip);
+        let numbered = self.editor_layout.numbered_rows(&text_output.galley);
+        let local_top = gutter_clip.top() - text_output.galley_pos.y;
+        let first = numbered.partition_point(|&(index, _)| {
+            let row = &text_output.galley.rows[index];
+            row.pos.y + row.size.y < local_top
+        });
+        for &(index, line_number) in &numbered[first..] {
+            let row = &text_output.galley.rows[index];
+            let y = text_output.galley_pos.y + row.pos.y;
+            if y > gutter_clip.bottom() {
+                break;
+            }
+            if line_number <= line_count {
                 gutter_painter.text(
                     egui::pos2(gutter_inner.right(), y),
                     egui::Align2::RIGHT_TOP,
@@ -907,13 +801,6 @@ impl VelocimdApp {
                     editor_font.clone(),
                     tokens.text_muted,
                 );
-            }
-
-            if row.ends_with_newline {
-                line_number += 1;
-                number_next_row = true;
-            } else {
-                number_next_row = false;
             }
         }
 
@@ -951,7 +838,6 @@ impl VelocimdApp {
 
         let outcome = EditorOutcome {
             changed: text_output.response.changed(),
-            focused: text_output.response.has_focus(),
             clicked_line: clicked_line.map(|line| line.min(line_count.saturating_sub(1))),
             clicked_y,
             line_count,
@@ -1034,6 +920,7 @@ impl VelocimdApp {
 
         let scroll_area = egui::ScrollArea::vertical()
             .id_salt(("preview", doc_id))
+            .animated(false)
             .max_width(viewport_size.x)
             .max_height(viewport_size.y)
             .auto_shrink([false, false]);
@@ -1060,29 +947,46 @@ impl VelocimdApp {
         outcome: &EditorOutcome,
         ctx: &egui::Context,
     ) {
-        let pointer_over = ctx
-            .pointer_hover_pos()
-            .is_some_and(|position| inner_rect.contains(position));
         let offset = output_offset_y.max(0.0);
         let moved = (offset - applied_scroll).abs() > 0.5;
-
+        let document_id = self
+            .state
+            .active_document()
+            .map_or(0, |document| document.id);
+        let geometry_changed = outcome.galley.as_ref().is_some_and(|galley| {
+            let changed = self
+                .editor_sync_geometry
+                .as_ref()
+                .is_none_or(|(id, rect, old)| {
+                    *id != document_id || *rect != inner_rect || !Arc::ptr_eq(old, galley)
+                });
+            self.editor_sync_geometry = Some((document_id, inner_rect, Arc::clone(galley)));
+            changed
+        });
+        self.synced_scroll_y = offset;
         if let Some(clicked_line) = outcome.clicked_line {
-            self.synced_scroll_y = offset;
             self.preview_sync_line = clicked_line;
             self.preview_sync_anchor =
                 PreviewSyncAnchor::ScreenY(outcome.clicked_y.unwrap_or(inner_rect.center().y));
             ctx.request_repaint();
-        } else if moved && (pointer_over || outcome.focused) {
-            self.synced_scroll_y = offset;
-            self.preview_sync_line = top_visible_editor_line(inner_rect.top(), outcome);
+        } else if moved || geometry_changed || outcome.changed {
+            // ScrollArea constructs the content using applied_scroll, then
+            // returns its post-input/clamp offset. Reconcile those coordinate
+            // spaces before asking which logical source line is visible.
+            let line = top_visible_editor_line(inner_rect.top() + offset - applied_scroll, outcome);
+            let changed = self.preview_sync_line != line
+                || self.preview_sync_anchor != PreviewSyncAnchor::Top;
+            self.preview_sync_line = line;
             self.preview_sync_anchor = PreviewSyncAnchor::Top;
-            ctx.request_repaint();
-        } else if moved {
-            self.synced_scroll_y = offset;
+            if changed {
+                ctx.request_repaint();
+            }
         }
     }
 
     fn workspace(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.state
+            .ensure_document_loaded(self.state.active_document);
         self.command_bar(ui, ctx);
 
         ui.allocate_ui_with_layout(
@@ -1107,18 +1011,13 @@ impl VelocimdApp {
     }
 
     fn run_command(&mut self, ctx: &egui::Context, command: Command) {
+        self.ensure_persistence_worker(ctx);
         match command {
             Command::NewTab => self.create_markdown_file(ctx),
             Command::SelectWorkingFolder => self.select_working_folder(ctx),
             Command::OpenFile => self.open_file(ctx),
             Command::SaveFile => {
-                match self.state.save_file() {
-                    Some(path) => {
-                        self.invalidate_folder_for_path(&path);
-                        self.status_message = Some(format!("Saved {}", short_path(&path)))
-                    }
-                    None => self.status_message = Some("Save failed".to_string()),
-                }
+                self.request_document_save(ctx, true);
                 self.persist_state();
             }
             Command::SaveFileAs => self.save_file_as(ctx),
@@ -1143,26 +1042,9 @@ impl VelocimdApp {
             self.status_message = Some("Choose a folder first".to_string());
             return;
         }
-
-        self.state.new_tab();
+        self.state.new_tab_deferred();
         self.reset_scroll_sync();
-        let created_path = self
-            .state
-            .active_document()
-            .and_then(|document| document.path.as_ref())
-            .cloned();
-        if let Some(path) = &created_path {
-            self.invalidate_folder_for_path(path);
-        }
-        self.status_message = Some(
-            created_path
-                .as_ref()
-                .map(|path| format!("Created {}", short_path(path)))
-                .unwrap_or_else(|| {
-                    "File creation failed; draft retained. Choose another folder or use Save As."
-                        .to_string()
-                }),
-        );
+        self.request_document_save(ctx, true);
         self.persist_state();
         ctx.request_repaint();
     }
@@ -1200,7 +1082,9 @@ impl VelocimdApp {
             .unwrap_or(None);
 
         if let Some(path) = selected {
-            if self.state.set_working_folder(path.clone()) {
+            self.finish_background_writes();
+            if self.state.set_working_folder_deferred(path.clone()) {
+                self.request_document_save(ctx, false);
                 self.folder_entry_cache.invalidate(&path);
                 self.status_message = Some(format!("Working folder {}", short_path(&path)));
                 self.persist_state();
@@ -1254,27 +1138,35 @@ impl VelocimdApp {
             .save_single_file()
             .show()
             .unwrap_or(None);
-
         if let Some(path) = selected {
-            let path = with_markdown_extension(path);
-            if self
-                .state
-                .path_owned_by_other(self.state.active_document, &path)
-            {
-                self.status_message = Some(
-                    "Save As blocked: that file is already open. Choose another name.".to_string(),
-                );
-                return;
-            }
-            if self.state.save_file_as(path.clone()) {
+            self.save_to_selected_path(ctx, path);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_to_selected_path(&mut self, ctx: &egui::Context, path: PathBuf) {
+        let path = with_markdown_extension(path);
+        self.finish_background_writes();
+        let existed = path.exists();
+        if self
+            .state
+            .path_owned_by_other(self.state.active_document, &path)
+        {
+            self.status_message = Some(
+                "Save As blocked: that file is already open. Choose another name.".to_string(),
+            );
+            return;
+        }
+        if self.state.save_file_as(path.clone()) {
+            if !existed {
                 self.invalidate_folder_for_path(&path);
-                self.file_name_editor_document_id = None;
-                self.status_message = Some(format!("Saved {}", short_path(&path)));
-                self.persist_state();
-                ctx.request_repaint();
-            } else {
-                self.status_message = Some("Save failed".to_string());
             }
+            self.file_name_editor_document_id = None;
+            self.status_message = Some(format!("Saved {}", short_path(&path)));
+            self.persist_state();
+            ctx.request_repaint();
+        } else {
+            self.status_message = Some("Save failed".to_string());
         }
     }
 
@@ -1287,6 +1179,7 @@ impl VelocimdApp {
 
     fn reset_scroll_sync(&mut self) {
         self.synced_scroll_y = 0.0;
+        self.editor_sync_geometry = None;
         self.preview_sync_line = 0;
         self.preview_sync_anchor = PreviewSyncAnchor::Top;
     }
@@ -1301,65 +1194,6 @@ impl VelocimdApp {
         let due = Instant::now() + AUTOSAVE_DEBOUNCE;
         self.autosave_due = Some(due);
         ctx.request_repaint_after(AUTOSAVE_DEBOUNCE);
-    }
-
-    fn schedule_state_save(&mut self, ctx: &egui::Context) {
-        let due = Instant::now() + STATE_SAVE_DEBOUNCE;
-        self.state_save_due = Some(due);
-        ctx.request_repaint_after(STATE_SAVE_DEBOUNCE);
-    }
-
-    fn process_deferred_work(&mut self, ctx: &egui::Context) {
-        let now = Instant::now();
-
-        if let Some(due) = self.autosave_due {
-            if now >= due {
-                self.autosave_due = None;
-                if self.flush_dirty_documents() {
-                    self.schedule_state_save(ctx);
-                }
-            } else {
-                ctx.request_repaint_after(due.duration_since(now));
-            }
-        }
-
-        if let Some(due) = self.state_save_due {
-            if now >= due {
-                self.state_save_due = None;
-                self.persist_state();
-            } else {
-                ctx.request_repaint_after(due.duration_since(now));
-            }
-        }
-    }
-
-    fn flush_dirty_documents(&mut self) -> bool {
-        let result = self.state.save_dirty_documents();
-        for path in &result.saved {
-            self.invalidate_folder_for_path(path);
-        }
-        let saved_count = result.saved.len();
-        if result.failed > 0 {
-            self.status_message = Some(if saved_count > 0 {
-                format!("Saved {saved_count}, failed {}", result.failed)
-            } else {
-                "Save failed".to_string()
-            });
-            return true;
-        }
-
-        if let Some(path) = result.saved.last() {
-            self.status_message = Some(format!("Saved {}", short_path(path)));
-            return true;
-        }
-
-        false
-    }
-
-    fn persist_state(&mut self) {
-        if let Err(error) = self.state.save() {
-            self.status_message = Some(format!("State save failed: {error}"));
-        }
     }
 }
 
@@ -1393,138 +1227,11 @@ impl App for VelocimdApp {
 
 impl Drop for VelocimdApp {
     fn drop(&mut self) {
-        let result = self.state.save_dirty_documents();
-        if result.failed > 0 {
-            eprintln!(
-                "Velocimd: {} document saves failed; preserving drafts in session recovery",
-                result.failed
-            );
-        }
-        if let Err(error) = self.state.save() {
-            eprintln!("Velocimd: session recovery save failed: {error}");
-        }
+        self.shutdown_persistence();
     }
 }
 
-fn split_preview_segments(markdown: &str) -> Vec<PreviewSegment> {
-    let lines = markdown.split('\n').collect::<Vec<_>>();
-    let mut segments = Vec::new();
-    let mut markdown_start = 0;
-    let mut line_index = 0;
-
-    while line_index < lines.len() {
-        let trimmed = lines[line_index].trim_start();
-
-        if let Some(fence) = mermaid_fence_marker(trimmed)
-            && let Some(closing_line) = find_closing_fence(&lines, line_index + 1, fence)
-        {
-            push_markdown_segments(&mut segments, &lines, markdown_start, line_index);
-
-            let source = lines[line_index + 1..closing_line].join("\n");
-            segments.push(PreviewSegment {
-                start_line: line_index,
-                line_count: closing_line - line_index + 1,
-                kind: PreviewSegmentKind::Mermaid(source.trim().to_string()),
-            });
-
-            line_index = closing_line + 1;
-            markdown_start = line_index;
-            continue;
-        }
-
-        line_index += 1;
-    }
-
-    push_markdown_segments(&mut segments, &lines, markdown_start, lines.len());
-
-    if segments.is_empty() {
-        segments.push(PreviewSegment {
-            start_line: 0,
-            line_count: 1,
-            kind: PreviewSegmentKind::Markdown(String::new()),
-        });
-    }
-
-    segments
-}
-
-fn push_markdown_segments(
-    segments: &mut Vec<PreviewSegment>,
-    lines: &[&str],
-    start: usize,
-    end: usize,
-) {
-    if start >= end {
-        return;
-    }
-
-    let mut block_start = start;
-    let mut open_fence = None;
-
-    for line_index in start..end {
-        let trimmed = lines[line_index].trim_start();
-
-        if let Some(fence) = open_fence {
-            if trimmed.starts_with(fence) {
-                open_fence = None;
-            }
-        } else if let Some(fence) = markdown_fence_marker(trimmed) {
-            open_fence = Some(fence);
-        } else if trimmed.trim().is_empty() {
-            push_markdown_segment(segments, lines, block_start, line_index + 1);
-            block_start = line_index + 1;
-        }
-    }
-
-    push_markdown_segment(segments, lines, block_start, end);
-}
-
-fn push_markdown_segment(
-    segments: &mut Vec<PreviewSegment>,
-    lines: &[&str],
-    start: usize,
-    end: usize,
-) {
-    if start >= end {
-        return;
-    }
-
-    segments.push(PreviewSegment {
-        start_line: start,
-        line_count: end - start,
-        kind: PreviewSegmentKind::Markdown(lines[start..end].join("\n")),
-    });
-}
-
-fn mermaid_fence_marker(trimmed: &str) -> Option<&'static str> {
-    let fence = markdown_fence_marker(trimmed)?;
-    let language = trimmed.trim_start_matches(fence).trim();
-
-    if language.eq_ignore_ascii_case("mermaid") {
-        Some(fence)
-    } else {
-        None
-    }
-}
-
-fn markdown_fence_marker(trimmed: &str) -> Option<&'static str> {
-    if trimmed.starts_with("```") {
-        Some("```")
-    } else if trimmed.starts_with("~~~") {
-        Some("~~~")
-    } else {
-        None
-    }
-}
-
-fn find_closing_fence(lines: &[&str], start: usize, fence: &str) -> Option<usize> {
-    lines
-        .iter()
-        .enumerate()
-        .skip(start)
-        .find_map(|(index, line)| line.trim_start().starts_with(fence).then_some(index))
-}
-
+#[cfg(test)]
 fn line_in_segment(line: usize, start_line: usize, line_count: usize) -> bool {
     line >= start_line && line < start_line.saturating_add(line_count.max(1))
 }
@@ -1591,31 +1298,6 @@ fn line_for_editor_y(local_y: f32, galley: &egui::Galley) -> usize {
 
 fn editor_gutter_width(digit_count: usize) -> f32 {
     digit_count as f32 * 9.0 + 18.0
-}
-
-fn editor_visual_rows(
-    ui: &mut egui::Ui,
-    content: &str,
-    font_id: &egui::FontId,
-    wrap_width: f32,
-    row_height: f32,
-) -> usize {
-    if row_height <= 0.0 {
-        return 1;
-    }
-
-    let text_color = ui.visuals().widgets.inactive.text_color();
-    let galley_height = ui.fonts_mut(|fonts| {
-        let job = egui::text::LayoutJob::simple(
-            content.to_owned(),
-            font_id.clone(),
-            text_color,
-            wrap_width.max(1.0),
-        );
-        fonts.layout_job(job).size().y
-    });
-
-    (galley_height / row_height).ceil().max(1.0) as usize
 }
 
 fn viewport_anchor_for_y(y: f32, rect: egui::Rect) -> f32 {
@@ -1700,22 +1382,33 @@ fn folder_tab_menu(
     egui::ScrollArea::vertical()
         .max_height(320.0)
         .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for entry in entries {
-                let label = match entry.kind {
-                    FolderEntryKind::Folder => format!("[folder] {}", entry.name),
-                    FolderEntryKind::Markdown => format!("[md] {}", entry.name),
-                };
+        .show_rows(
+            ui,
+            ui.spacing().interact_size.y.max(
+                ui.text_style_height(&egui::TextStyle::Button)
+                    + 2.0 * ui.spacing().button_padding.y,
+            ),
+            entries.len(),
+            |ui, range| {
+                for index in range {
+                    let entry = &entries[index];
+                    #[cfg(test)]
+                    MENU_ROWS.with(|count| count.set(count.get() + 1));
+                    let label = match entry.kind {
+                        FolderEntryKind::Folder => format!("[folder] {}", entry.name),
+                        FolderEntryKind::Markdown => format!("[md] {}", entry.name),
+                    };
 
-                if ui.button(label).clicked() {
-                    match entry.kind {
-                        FolderEntryKind::Folder => *selected_folder = Some(entry.path),
-                        FolderEntryKind::Markdown => *selected_file = Some(entry.path),
+                    if ui.button(label).clicked() {
+                        match entry.kind {
+                            FolderEntryKind::Folder => *selected_folder = Some(entry.path.clone()),
+                            FolderEntryKind::Markdown => *selected_file = Some(entry.path.clone()),
+                        }
+                        ui.close();
                     }
-                    ui.close();
                 }
-            }
-        });
+            },
+        );
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1761,11 +1454,7 @@ fn folder_entries(folder: &Path) -> Vec<FolderEntry> {
         })
         .collect::<Vec<_>>();
 
-    entries.sort_by(|left, right| {
-        left.kind
-            .cmp(&right.kind)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-    });
+    entries.sort_by_cached_key(|entry| (entry.kind, entry.name.to_lowercase()));
     entries
 }
 
@@ -1797,6 +1486,42 @@ mod preview_sync_tests {
         assert!(!line_in_segment(6, mermaid.start_line, mermaid.line_count));
     }
 
+    #[test]
+    fn preview_semantic_blocks_keep_loose_nested_lists_and_literal_mermaid() {
+        let list = "- first\n\n  continuation\n\n  - nested\n\n- second\n";
+        assert_eq!(
+            split_preview_segments(list).len(),
+            1,
+            "a loose list is one semantic block"
+        );
+        let literal = "````text\n```mermaid\ngraph TD\nA --> B\n```\n````";
+        assert!(
+            split_preview_segments(literal)
+                .iter()
+                .all(|block| matches!(block.kind, PreviewSegmentKind::Markdown(_)))
+        );
+    }
+
+    #[test]
+    fn preview_warm_frame_bounds_actual_block_work() {
+        let ctx = egui::Context::default();
+        let mut renderer = PreviewRenderer::default();
+        let markdown = "plain paragraph\n\n".repeat(10_000);
+        for _ in 0..2 {
+            PREVIEW_BLOCK_WORK.with(|work| work.set(0));
+            let _ = ctx.run_ui(key_input(egui::Key::F1, egui::Modifiers::NONE), |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    renderer.show_document(ui, 7, 1, &markdown, DesignTokens::zed_dark(), None);
+                });
+            });
+        }
+        let work = PREVIEW_BLOCK_WORK.with(|work| work.get());
+        assert!(
+            work < 100,
+            "warm frame constructed {work} blocks, not just clipped shapes"
+        );
+    }
+
     fn test_app(content: &str) -> (tempfile::TempDir, VelocimdApp) {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("state.json");
@@ -1805,6 +1530,95 @@ mod preview_sync_tests {
         state.save_to(&session).unwrap();
         let state = AppState::load_from(session).unwrap();
         (temp, VelocimdApp::from_state(state))
+    }
+
+    #[test]
+    fn gutter_builds_only_visible_labels_for_ten_thousand_lines() {
+        let (_temp, mut app) = test_app(&"one line\n".repeat(10_000));
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(key_input(egui::Key::F1, egui::Modifiers::NONE), |ui| {
+            let _ = app.editor_content(ui, 500.0);
+        });
+        let labels = output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Text(_)))
+            .count();
+        assert!(
+            labels < 100,
+            "viewport must bound label construction, got {labels}"
+        );
+    }
+
+    #[test]
+    fn folder_menu_builds_only_viewport_rows() {
+        let mut cache = FolderEntryCache::default();
+        let folder = Path::new("/fixture-only-folder");
+        let entries = (0..10_000)
+            .map(|index| FolderEntry {
+                name: format!("Note {index}"),
+                path: folder.join(format!("{index}.md")),
+                kind: FolderEntryKind::Markdown,
+            })
+            .collect::<Vec<_>>();
+        cache.entries.insert(
+            folder.to_path_buf(),
+            CachedFolderEntries {
+                loaded_at: Instant::now(),
+                entries: entries.into(),
+            },
+        );
+        let ctx = egui::Context::default();
+        MENU_ROWS.with(|count| count.set(0));
+        let output = ctx.run_ui(key_input(egui::Key::F1, egui::Modifiers::NONE), |ui| {
+            folder_tab_menu(ui, &mut cache, folder, &mut None, &mut None);
+        });
+        let labels = output
+            .shapes
+            .iter()
+            .filter(|shape| matches!(&shape.shape, egui::Shape::Text(_)))
+            .count();
+        assert!(labels < 100, "menu paint must be clipped, got {labels}");
+        let rows = MENU_ROWS.with(|count| count.get());
+        assert!(
+            rows < 100,
+            "menu must not construct all 10k buttons, got {rows}"
+        );
+    }
+
+    #[test]
+    fn ordinary_mode_changes_coalesce_without_immediate_disk_writes() {
+        let (temp, mut app) = test_app("draft");
+        let ctx = egui::Context::default();
+        app.run_command(&ctx, Command::SetMode(EditorMode::Preview));
+        let disk = AppState::load_from(temp.path().join("state.json")).unwrap();
+        assert_eq!(
+            disk.mode,
+            EditorMode::Split,
+            "mode changes should wait for the coalesced session deadline"
+        );
+        assert!(app.state_save_due.is_some());
+    }
+
+    #[test]
+    fn editor_widget_shares_the_measured_galley_on_warm_frames() {
+        let (_temp, mut app) = test_app(&"wrapped line words ".repeat(200));
+        let ctx = egui::Context::default();
+        let mut previous = None;
+        for _ in 0..3 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_max_width(300.0);
+                let output = app.editor_content(ui, 500.0);
+                if let Some(old) = &previous {
+                    assert!(Arc::ptr_eq(old, output.galley.as_ref().unwrap()));
+                }
+                previous = output.galley;
+            });
+        }
+        assert_eq!(
+            app.editor_layout.layouts, 1,
+            "height measurement and TextEdit must share one cached layout"
+        );
     }
 
     #[test]
@@ -1859,6 +1673,9 @@ mod preview_sync_tests {
         assert_eq!(core.folder_tabs, app.state.folder_tabs);
         assert_eq!(core.folder_tabs.len(), 1);
         assert_eq!(core.documents, app.state.documents);
+        app.state_save_due = Some(Instant::now());
+        app.process_deferred_work(&egui::Context::default());
+        app.finish_background_writes();
         let restored = AppState::load_from(temp.path().join("state.json")).unwrap();
         assert_eq!(restored.folder_tabs, core.folder_tabs);
     }
@@ -1934,6 +1751,9 @@ mod preview_sync_tests {
         );
         assert!(!app.state.command_palette_open);
         assert_eq!(app.state.mode, EditorMode::Preview);
+        app.state_save_due = Some(Instant::now());
+        app.process_deferred_work(&ctx);
+        app.finish_background_writes();
         assert_eq!(
             AppState::load_from(temp.path().join("state.json"))
                 .unwrap()
