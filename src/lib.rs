@@ -6,6 +6,7 @@ pub mod icons;
 pub mod markdown;
 pub mod mermaid;
 pub mod modes;
+pub mod persistence;
 pub mod theme;
 pub mod ui;
 

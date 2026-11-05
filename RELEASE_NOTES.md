@@ -1,31 +1,36 @@
-# Velocimd v0.1.5 — a quieter toolbar
+# Velocimd v0.1.6 — editor performance and input fixes
 
-## Refreshed
+## Faster editing and preview
 
-- A cohesive family of 15 minimalist SVG icons replaces the hand-drawn toolbar symbols, with consistent rounded strokes, balanced proportions, and clearer file, save, edit, preview, and theme controls.
-- The same icons adapt to Velocidark, Velocilight, and custom themes: muted at rest, brighter on hover or keyboard focus, and accent-colored for the selected mode.
-- Square, centered artwork stays sharp at normal and high-DPI scales without stretching inside buttons.
-- Keyboard focus is more visible, and icon buttons expose their labels and selected state to accessibility tooling.
+- Reuse editor layouts and draw only visible line numbers to reduce repeated work on large documents.
+- Retain semantic Markdown preview blocks and render the visible region, preserving lists, tables, code, references, images, Mermaid diagrams, and source-based Split synchronization.
+- Share folder-menu snapshots, cache sorting keys, and build only visible rows for large folders.
+- Restore inactive clean notes from metadata and load their bodies when selected, rather than reading every note during startup. Active notes and recovery drafts remain available immediately.
 
-## Kept familiar
+## Safer, quieter persistence
 
-- The application logo, commands, keyboard shortcuts, tooltips, and button hit targets are unchanged.
-- Icons are embedded in the application and use the existing SVG loader/cache. No added dependency, icon font, runtime asset download, or network request.
-- This release is limited to the icon refresh. The separate navigation/sidebar redesign is not included.
+- Run native document and session writes through one ordered background worker, with revision-aware completion and coalesced session updates.
+- Preserve atomic file replacement, recovery drafts, save/rename ordering, path-collision checks, and graceful-shutdown draining.
+- Stop rewriting clean documents when switching working folders and avoid redundant ownership-path normalization.
 
-## Verification
+## Fixed
 
-- Added regression coverage for icon source coverage, clipping, tinting, high-DPI raster sizes, texture reuse, and widget sizing/selection.
-- Added an isolated native toolbar smoke test for dark/light themes, normal and double-DPI rendering, real mode/theme clicks, save preservation, and graceful exit.
-- Retained native editing, autosave, command-palette, and reopen smoke coverage.
+- Scrolling over the right-hand preview in Split view now scrolls the shared document and keeps both panes synchronized, without clicking the preview first.
+- `Alt+L` and `Alt+D` switch themes without inserting their letters into a focused editor, including when another command arrives in the same frame. Command priority, ordinary typing, paste, IME input, AltGr, and command-palette behavior are preserved.
+- Decoded newline entities in large Markdown paragraphs no longer stall cold preview layout; UTF-8 progress and newline geometry have regression coverage.
 
-## Downloads
+## Verification and limits
 
-- **Linux:** Debian/Ubuntu `.deb`, `.AppImage`, or Arch package archive/PKGBUILD.
-- **macOS:** universal `.dmg` for Apple Silicon and Intel.
-- **Windows:** x64 NSIS setup installer.
-- **Integrity:** `SHA256SUMS` covers all six package assets.
+- The development candidate passes 127 tests, formatting, strict all-target/all-feature Clippy, native compilation, and wasm32 compilation.
+- Isolated Linux native checks cover large-session restore, scrolling, mode/theme changes, exact saves, inactive-note activation, graceful close/reopen, and unchanged notes. Theme-shortcut checks include ordinary typing afterward as a positive control.
+- Reproducible paired CPU probes and their measurement limits are documented in [PERFORMANCE.md](https://github.com/doesntdev/velocimd/blob/main/PERFORMANCE.md). CPU pane timings are not GPU presentation or end-to-end typing-latency measurements.
+- No new application dependencies, services, database, account, or network requirement. The ordinary Markdown files-and-folders model and minimalist interface remain unchanged.
+- The separate navigation/sidebar work and headless-render CLI PR are not included in this release candidate.
 
-The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native GUI interaction is exercised on Linux; successful Windows/macOS package builds alone are not a claim of GUI certification.
+## Packages
 
-**Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.4...v0.1.5
+The existing release workflow produces Linux `.deb`, `.AppImage`, and Arch package/PKGBUILD assets, a universal macOS `.dmg`, and a Windows x64 NSIS installer, plus `SHA256SUMS`.
+
+This source preparation does not itself publish downloadable v0.1.6 packages. The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native GUI interaction is exercised on Linux; compilation or package generation alone does not certify Windows/macOS GUI behavior. WASM compilation does not imply browser filesystem/dialog support.
+
+**Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.5...v0.1.6

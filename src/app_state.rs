@@ -1,15 +1,26 @@
 use crate::{
-    commands::Command, document::Document, file_io::atomic_write, modes::EditorMode,
+    commands::Command,
+    document::Document,
+    file_io::atomic_write,
+    modes::EditorMode,
+    persistence::{DocumentWrite, DocumentWriteResult, SessionWrite},
     theme::ThemeConfig,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    static DOCUMENT_READS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
@@ -36,8 +47,8 @@ pub struct FolderTab {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct PersistedAppState {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PersistedAppState {
     #[serde(default)]
     documents: Vec<PersistedDocument>,
     #[serde(default)]
@@ -62,7 +73,7 @@ struct PersistedAppState {
     working_folder: Option<PathBuf>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedDocument {
     id: u64,
     title: String,
@@ -97,11 +108,15 @@ impl PersistedAppState {
     }
 
     fn into_state(self) -> AppState {
+        let active = self
+            .active_document
+            .min(self.documents.len().saturating_sub(1));
         AppState {
             documents: self
                 .documents
                 .into_iter()
-                .map(PersistedDocument::into_document)
+                .enumerate()
+                .map(|(index, document)| document.restore(index == active))
                 .collect(),
             active_document: self.active_document,
             folder_tabs: self.folder_tabs,
@@ -131,8 +146,29 @@ impl PersistedDocument {
         }
     }
 
+    #[cfg(test)]
     fn into_document(self) -> Document {
+        self.restore(true)
+    }
+
+    fn restore(self, eager: bool) -> Document {
         let snapshot = self.scratch_content.or(self.content);
+        if !eager
+            && !self.dirty
+            && snapshot.is_none()
+            && self.path.as_deref().is_some_and(document_metadata_is_valid)
+        {
+            return Document {
+                id: self.id,
+                title: self.title,
+                path: self.path,
+                content: String::new(),
+                dirty: false,
+                revision: 0,
+                loaded: false,
+                identity_revision: 0,
+            };
+        }
         let was_scratch = self.path.is_none();
         let mut path = self.path;
         let disk_content = path.as_deref().and_then(read_document_content);
@@ -159,6 +195,8 @@ impl PersistedDocument {
             content,
             dirty,
             revision: 0,
+            loaded: true,
+            identity_revision: 0,
         }
     }
 }
@@ -215,19 +253,31 @@ impl AppState {
 
     /// Save the app state to the config file.
     pub fn save(&self) -> Result<()> {
+        self.prepare_session_write()?
+            .write()
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn save_to(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.prepare_session_write_to(path)
+            .write()
+            .map_err(anyhow::Error::msg)
+    }
+
+    pub fn prepare_session_write(&self) -> Result<SessionWrite> {
         let path = match &self.storage_path {
             Some(path) => path.clone(),
             None => Self::state_path()?,
         };
-        self.save_to(path)
+        Ok(self.prepare_session_write_to(path))
     }
 
-    pub fn save_to(&self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref();
-        let persisted = PersistedAppState::from_state(self);
-        let json = serde_json::to_string(&persisted)?;
-        atomic_write(path, json.as_bytes(), true)?;
-        Ok(())
+    /// Explicit target for isolated fixtures and callers not using default config.
+    pub fn prepare_session_write_to(&self, path: impl AsRef<Path>) -> SessionWrite {
+        SessionWrite {
+            path: path.as_ref().to_path_buf(),
+            snapshot: PersistedAppState::from_state(self),
+        }
     }
 
     /// Get the path to the state file.
@@ -235,7 +285,6 @@ impl AppState {
         let mut path =
             dirs::config_dir().ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
         path.push("velocimd");
-        fs::create_dir_all(&path)?;
         path.push("state.json");
         Ok(path)
     }
@@ -259,17 +308,50 @@ impl AppState {
     }
 
     pub fn active_document_mut(&mut self) -> Option<&mut Document> {
+        self.ensure_document_loaded(self.active_document);
         self.documents.get_mut(self.active_document)
     }
 
+    /// Hydrate once. On failure detach the unavailable file as in legacy restore;
+    /// never expose an unloaded placeholder to any writer.
+    pub fn ensure_document_loaded(&mut self, index: usize) -> bool {
+        let Some(document) = self.documents.get_mut(index) else {
+            return false;
+        };
+        if document.loaded {
+            return true;
+        }
+        let content = document.path.as_deref().and_then(read_document_content);
+        document.loaded = true;
+        document.revision = document.revision.saturating_add(1);
+        if let Some(content) = content {
+            document.content = content;
+            true
+        } else {
+            log::warn!(
+                "Could not load document {} ({:?})",
+                document.id,
+                document.path
+            );
+            document.path = None;
+            document.mark_identity_changed();
+            false
+        }
+    }
+
     pub fn new_tab(&mut self) {
+        self.new_tab_deferred();
+        let _ = self.save_document_at(self.active_document);
+    }
+
+    /// Create the buffer immediately; the UI submits its first durable write.
+    pub fn new_tab_deferred(&mut self) {
         let number = self.documents.len() + 1;
         self.documents.push(Document::scratch(
             format!("Untitled-{number}.md"),
             "# Untitled\n\nStart writing.\n",
         ));
         self.active_document = self.documents.len() - 1;
-        let _ = self.save_document_at(self.active_document);
     }
 
     pub fn close_tab(&mut self) {
@@ -287,6 +369,7 @@ impl AppState {
         } else if self.active_document >= self.documents.len() {
             self.active_document = self.documents.len().saturating_sub(1);
         }
+        self.ensure_document_loaded(self.active_document);
     }
 
     pub fn open_file(&mut self, path: PathBuf) -> bool {
@@ -297,6 +380,9 @@ impl AppState {
             .position(|document| document.path.as_ref() == Some(&path))
         {
             self.active_document = index;
+            if !self.ensure_document_loaded(index) {
+                return false;
+            }
             self.remember_recent_file(path);
             return true;
         }
@@ -322,7 +408,7 @@ impl AppState {
                 && document
                     .path
                     .as_deref()
-                    .is_some_and(|existing| normalized_path(existing) == path)
+                    .is_some_and(|existing| existing == path)
         })
     }
 
@@ -335,6 +421,9 @@ impl AppState {
             return false;
         }
         let path = normalized_path(&path);
+        if !self.ensure_document_loaded(self.active_document) {
+            return false;
+        }
         let Some(content) = self
             .active_document()
             .map(|document| document.content.clone())
@@ -351,6 +440,7 @@ impl AppState {
         let Some(document) = self.active_document_mut() else {
             return false;
         };
+        document.mark_identity_changed();
         document.path = Some(path.clone());
         document.title = path
             .file_name()
@@ -370,6 +460,9 @@ impl AppState {
             return None;
         }
 
+        if !self.ensure_document_loaded(index) {
+            return None;
+        }
         let file_name = markdown_file_name(visible_name);
         let content = self.documents.get(index)?.content.clone();
 
@@ -389,11 +482,13 @@ impl AppState {
         } else {
             let document = self.documents.get_mut(index)?;
             document.title = file_name;
-            document.dirty = true;
+            document.mark_changed();
+            document.mark_identity_changed();
             return None;
         };
 
         let document = self.documents.get_mut(index)?;
+        document.mark_identity_changed();
         document.path = Some(path.clone());
         document.title = path
             .file_name()
@@ -422,6 +517,15 @@ impl AppState {
     }
 
     pub fn set_working_folder(&mut self, path: PathBuf) -> bool {
+        if !self.set_working_folder_deferred(path) {
+            return false;
+        }
+        let _ = self.save_dirty_documents();
+        true
+    }
+
+    /// Change metadata without running note fsyncs on the UI thread.
+    pub fn set_working_folder_deferred(&mut self, path: PathBuf) -> bool {
         if fs::create_dir_all(&path).is_err() {
             return false;
         }
@@ -429,7 +533,6 @@ impl AppState {
         let path = fs::canonicalize(&path).unwrap_or(path);
         self.working_folder = Some(path.clone());
         let _ = self.add_folder_tab(path);
-        self.save_all_documents();
         true
     }
 
@@ -488,7 +591,9 @@ impl AppState {
             .documents
             .iter()
             .enumerate()
-            .filter_map(|(index, document)| document.dirty.then_some(index))
+            .filter_map(|(index, document)| {
+                (document.dirty || document.path.is_none()).then_some(index)
+            })
             .collect::<Vec<_>>();
         let mut result = SaveDirtyDocumentsResult::default();
 
@@ -508,31 +613,164 @@ impl AppState {
 
     pub fn save_document_at(&mut self, index: usize) -> Option<PathBuf> {
         let document = self.documents.get(index)?;
-        let overwrite = document.path.is_some();
-        let path = document
-            .path
-            .clone()
-            .or_else(|| self.default_document_path(&document.title))?;
-        if self.path_owned_by_other(index, &path) {
-            return None;
+        if !document.loaded && !document.dirty {
+            // A synchronous save-all must not hydrate or truncate clean deferred bodies.
+            return document.path.clone();
         }
-        atomic_write(&path, document.content.as_bytes(), overwrite).ok()?;
-        let path = fs::canonicalize(&path).unwrap_or(path);
-        let document = self.documents.get_mut(index)?;
+        let result = self.prepare_document_write(index)?.write();
+        let path = result.result.as_ref().ok().cloned();
+        self.apply_write_result(&result);
+        path
+    }
+
+    pub fn prepare_dirty_writes(&self) -> Vec<DocumentWrite> {
+        let (writes, errors) = self.prepare_dirty_writes_with_errors();
+        for error in errors {
+            log::warn!("{error}");
+        }
+        writes
+    }
+
+    /// The controller should surface these named preparation failures alongside
+    /// worker failures. No failed preparation is marked clean or dropped from recovery.
+    pub fn prepare_dirty_writes_with_errors(&self) -> (Vec<DocumentWrite>, Vec<String>) {
+        let mut writes = Vec::new();
+        let mut errors = Vec::new();
+        let mut reserved = HashSet::new();
+        for (index, document) in self.documents.iter().enumerate() {
+            if !document.dirty && document.path.is_some() {
+                continue;
+            }
+            match self.prepare_write(index, &reserved) {
+                Ok(write) => {
+                    reserved.insert(write.path.clone());
+                    writes.push(write);
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+        (writes, errors)
+    }
+
+    pub fn prepare_document_write(&self, index: usize) -> Option<DocumentWrite> {
+        match self.prepare_write(index, &HashSet::new()) {
+            Ok(write) => Some(write),
+            Err(error) => {
+                log::warn!("{error}");
+                None
+            }
+        }
+    }
+
+    fn prepare_write(
+        &self,
+        index: usize,
+        reserved: &HashSet<PathBuf>,
+    ) -> Result<DocumentWrite, String> {
+        let document = self
+            .documents
+            .get(index)
+            .ok_or_else(|| format!("Could not prepare document at missing index {index}"))?;
+        let failure = |reason: &str| {
+            format!(
+                "Could not prepare document {} ({}): {reason}",
+                document.id, document.title
+            )
+        };
+        if !document.loaded {
+            return Err(failure("content is not loaded"));
+        }
+        let path = if let Some(path) = &document.path {
+            normalized_path(path)
+        } else {
+            let folder = self
+                .active_folder_path()
+                .ok_or_else(|| failure("no working folder"))?;
+            let file_name = markdown_file_name(&document.title);
+            unique_markdown_path_for_file_name(
+                folder,
+                &file_name,
+                &self.documents,
+                None,
+                Some(reserved),
+            )
+        };
+        // All model-owned paths were normalized when acquired. Only this incoming
+        // target needs normalization; never canonicalize every open owner on save.
+        if self
+            .documents
+            .iter()
+            .enumerate()
+            .any(|(owner, other)| owner != index && other.path.as_ref() == Some(&path))
+        {
+            return Err(failure("target belongs to another open document"));
+        }
+        if reserved.contains(&path) {
+            return Err(failure("target already reserved by this batch"));
+        }
+        Ok(DocumentWrite {
+            document_id: document.id,
+            revision: document.revision,
+            original_path: document.path.clone(),
+            path,
+            content: Arc::from(document.content.as_str()),
+            overwrite: document.path.is_some(),
+        })
+    }
+
+    /// True only while this request still belongs to the same live document.
+    /// A successful first save may attach a path to a newer edited revision, but
+    /// cannot clear it, or redirect a later rename/Save As (including path ABA).
+    pub fn apply_write_result(&mut self, result: &DocumentWriteResult) -> bool {
+        let request = &result.request;
+        let Some(index) = self
+            .documents
+            .iter()
+            .position(|document| document.id == request.document_id)
+        else {
+            return false;
+        };
+        let document = &self.documents[index];
+        if document.path != request.original_path
+            || request.revision < document.identity_revision
+            || request.revision > document.revision
+        {
+            return false;
+        }
+        let path = match &result.result {
+            Ok(path) => path.clone(),
+            Err(error) => {
+                log::warn!("{error}");
+                return true;
+            }
+        };
+        if self
+            .documents
+            .iter()
+            .enumerate()
+            .any(|(owner, other)| owner != index && other.path.as_ref() == Some(&path))
+        {
+            log::warn!(
+                "Saved document {} could not acquire target owned by another document: {}",
+                request.document_id,
+                path.display()
+            );
+            return false;
+        }
+        let document = &mut self.documents[index];
         document.path = Some(path.clone());
         document.title = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("Unknown")
             .to_string();
-        document.dirty = false;
-        self.remember_recent_file(path.clone());
-        Some(path)
-    }
-
-    fn default_document_path(&self, title: &str) -> Option<PathBuf> {
-        let folder = self.active_folder_path()?;
-        Some(unique_markdown_path(folder, title, &self.documents))
+        if document.revision == request.revision
+            && document.content.as_str() == request.content.as_ref()
+        {
+            document.dirty = false;
+        }
+        self.remember_recent_file(path);
+        true
     }
 
     fn remember_recent_file(&mut self, path: PathBuf) {
@@ -554,8 +792,12 @@ impl AppState {
                 if owned_paths.insert(path.clone()) {
                     document.path = Some(path);
                 } else {
-                    // Legacy states could contain two live buffers for one file.
-                    // Retain the second as a recovery copy rather than discard it.
+                    // A duplicate must become an eager recovery buffer BEFORE
+                    // losing its only disk reference, even if it was deferred.
+                    if !document.loaded {
+                        document.content = read_document_content(&path).unwrap_or_default();
+                        document.loaded = true;
+                    }
                     document.dirty = true;
                 }
             }
@@ -618,18 +860,13 @@ impl Default for AppState {
     }
 }
 
-fn unique_markdown_path(folder: &Path, title: &str, documents: &[Document]) -> PathBuf {
-    let file_name = markdown_file_name(title);
-    unique_markdown_path_for_file_name(folder, &file_name, documents, None)
-}
-
 fn unique_markdown_path_excluding(
     folder: &Path,
     file_name: &str,
     documents: &[Document],
     excluded_index: usize,
 ) -> PathBuf {
-    unique_markdown_path_for_file_name(folder, file_name, documents, Some(excluded_index))
+    unique_markdown_path_for_file_name(folder, file_name, documents, Some(excluded_index), None)
 }
 
 fn unique_markdown_path_for_file_name(
@@ -637,7 +874,9 @@ fn unique_markdown_path_for_file_name(
     file_name: &str,
     documents: &[Document],
     excluded_index: Option<usize>,
+    reserved: Option<&HashSet<PathBuf>>,
 ) -> PathBuf {
+    let folder = normalized_path(folder);
     let (stem, extension) = split_stem_extension(file_name);
 
     let mut suffix = 1;
@@ -656,7 +895,8 @@ fn unique_markdown_path_for_file_name(
             .and_then(|document| document.path.as_ref())
             == Some(&candidate);
 
-        if is_current_document || (!candidate.exists() && !is_open) {
+        let is_reserved = reserved.is_some_and(|paths| paths.contains(&candidate));
+        if !is_reserved && (is_current_document || (!candidate.exists() && !is_open)) {
             return candidate;
         }
 
@@ -677,13 +917,39 @@ fn normalized_path(path: &Path) -> PathBuf {
     })
 }
 
+fn document_metadata_is_valid(path: &Path) -> bool {
+    fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_DOCUMENT_BYTES)
+}
+
 fn read_document_content(path: &Path) -> Option<String> {
-    let metadata = fs::metadata(path).ok()?;
+    if !document_metadata_is_valid(path) {
+        return None;
+    }
+    // Bound the read as well as the preliminary metadata check: an external
+    // writer can grow a document between those operations.
+    use std::io::Read;
+    let file = fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
     if !metadata.is_file() || metadata.len() > MAX_DOCUMENT_BYTES {
         return None;
     }
-
-    fs::read_to_string(path).ok()
+    // Include the oversize sentinel without geometrically growing a large body.
+    let mut content = String::with_capacity(metadata.len() as usize + 1);
+    #[cfg(test)]
+    DOCUMENT_READS.with(|reads| {
+        let (count, bytes) = reads.get();
+        reads.set((count + 1, bytes));
+    });
+    file.take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    #[cfg(test)]
+    DOCUMENT_READS.with(|reads| {
+        let (count, bytes) = reads.get();
+        reads.set((count, bytes + content.len()));
+    });
+    (content.len() as u64 <= MAX_DOCUMENT_BYTES).then_some(content)
 }
 
 fn markdown_file_name(title: &str) -> String {
@@ -729,6 +995,50 @@ fn split_stem_extension(file_name: &str) -> (String, String) {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn restore_55_mebibyte_fixture_opens_only_active_body_and_hydrates_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("state.json");
+        let body = "x".repeat(1024 * 1024);
+        let mut state = AppState::fresh();
+        state.documents.clear();
+        for index in 0..55 {
+            let path = temp.path().join(format!("Note-{index}.md"));
+            fs::write(&path, &body).unwrap();
+            state
+                .documents
+                .push(Document::from_path(path, body.clone()));
+        }
+        state.active_document = 27;
+        state.save_to(&session).unwrap();
+        DOCUMENT_READS.with(|reads| reads.set((0, 0)));
+        let mut restored = AppState::load_from(&session).unwrap();
+        assert_eq!(DOCUMENT_READS.with(|reads| reads.get()), (1, 1024 * 1024));
+        assert_eq!(
+            restored.documents.iter().filter(|doc| doc.loaded).count(),
+            1
+        );
+        let retained_bytes: usize = restored
+            .documents
+            .iter()
+            .map(|doc| doc.content.capacity())
+            .sum();
+        assert!(retained_bytes < 2 * 1024 * 1024);
+        assert_eq!(restored.documents[27].content, body);
+        assert!(restored.ensure_document_loaded(10));
+        assert!(restored.ensure_document_loaded(10));
+        assert_eq!(
+            DOCUMENT_READS.with(|reads| reads.get()),
+            (2, 2 * 1024 * 1024)
+        );
+        println!(
+            "lazy fixture: documents=55 fixture_body_bytes={} restore_read_calls=1 restore_read_bytes={} retained_body_capacity={} after_activation_read_calls=2",
+            55 * body.len(),
+            body.len(),
+            retained_bytes
+        );
+    }
 
     #[test]
     fn failed_first_save_preserves_scratch_path_and_recovery() {
