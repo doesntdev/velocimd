@@ -263,7 +263,6 @@ impl VelocimdApp {
             let shortcut = |modifiers, key| egui::KeyboardShortcut::new(modifiers, key);
             let command = egui::Modifiers::COMMAND;
             let command_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
-            let alt = egui::Modifiers::ALT;
 
             if input.consume_shortcut(&shortcut(command, egui::Key::K))
                 || input.consume_shortcut(&shortcut(command_shift, egui::Key::P))
@@ -291,12 +290,8 @@ impl VelocimdApp {
                 Some(Command::SetMode(EditorMode::Split))
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Tab)) {
                 Some(Command::CycleMode)
-            } else if input.consume_shortcut(&shortcut(alt, egui::Key::L)) {
-                Some(Command::SwitchThemeLight)
-            } else if input.consume_shortcut(&shortcut(alt, egui::Key::D)) {
-                Some(Command::SwitchThemeDark)
             } else {
-                None
+                consume_theme_shortcuts(input)
             }
         });
 
@@ -1249,6 +1244,55 @@ impl Drop for VelocimdApp {
     }
 }
 
+fn consume_theme_shortcuts(input: &mut egui::InputState) -> Option<Command> {
+    let mut command = None;
+    let mut consumed = Vec::new();
+    for (index, event) in input.events.iter().enumerate() {
+        let egui::Event::Key {
+            key: key @ (egui::Key::L | egui::Key::D),
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            continue;
+        };
+        if !modifiers.matches_logically(egui::Modifiers::ALT) {
+            continue;
+        }
+        // Preserve Light's existing precedence if both shortcuts arrive together,
+        // but consume every recognized pair so neither can type into a text field.
+        if *key == egui::Key::L || command.is_none() {
+            command = Some(if *key == egui::Key::L {
+                Command::SwitchThemeLight
+            } else {
+                Command::SwitchThemeDark
+            });
+        }
+        consumed.push(index);
+        // egui-winit emits Key then Text; eframe's web keydown path emits Text then Key.
+        // Remove only the paired Text, never all same-letter input from this frame.
+        let text_index = if cfg!(target_arch = "wasm32") {
+            index.checked_sub(1)
+        } else {
+            index.checked_add(1)
+        };
+        if let Some(text_index) = text_index
+            && matches!(input.events.get(text_index), Some(egui::Event::Text(_)))
+        {
+            consumed.push(text_index);
+        }
+    }
+    let command = command?;
+    let mut index = 0;
+    input.events.retain(|_| {
+        let keep = !consumed.contains(&index);
+        index += 1;
+        keep
+    });
+    Some(command)
+}
+
 #[cfg(test)]
 fn line_in_segment(line: usize, start_line: usize, line_count: usize) -> bool {
     line >= start_line && line < start_line.saturating_add(line_count.max(1))
@@ -1874,6 +1918,159 @@ mod preview_sync_tests {
                 modifiers,
             }],
             ..Default::default()
+        }
+    }
+
+    fn theme_shortcut_frame(app: &mut VelocimdApp, ctx: &egui::Context, input: egui::RawInput) {
+        let _ = ctx.run_ui(input, |root| {
+            app.handle_shortcuts(root.ctx());
+            egui::CentralPanel::default().show_inside(root, |ui| app.workspace(ui, ctx));
+        });
+    }
+
+    #[test]
+    fn theme_shortcuts_do_not_type_into_focused_editor_or_schedule_a_document_save() {
+        for mode in [EditorMode::Edit, EditorMode::Split] {
+            let content = "Original Markdown λ界.\n".repeat(20);
+            let (_temp, mut app) = test_app(&content);
+            app.state.mode = mode;
+            let ctx = egui::Context::default();
+            egui_extras::install_image_loaders(&ctx);
+            app.state.theme.apply_to(&ctx);
+            theme_shortcut_frame(
+                &mut app,
+                &ctx,
+                key_input(egui::Key::F1, egui::Modifiers::NONE),
+            );
+            let position = egui::pos2(250.0, 180.0);
+            for pressed in [true, false] {
+                let mut input = key_input(egui::Key::F1, egui::Modifiers::NONE);
+                input.events = vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ];
+                theme_shortcut_frame(&mut app, &ctx, input);
+            }
+            assert!(ctx.memory(|memory| memory.focused().is_some()));
+            let revision = app.state.active_document().unwrap().revision;
+            for (key, text, modifiers, theme) in [
+                (egui::Key::L, Some("l"), egui::Modifiers::ALT, "Velocilight"),
+                (egui::Key::D, Some("d"), egui::Modifiers::ALT, "Velocidark"),
+                (egui::Key::D, Some("d"), egui::Modifiers::ALT, "Velocidark"),
+                (
+                    egui::Key::L,
+                    Some("L"),
+                    egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+                    "Velocilight",
+                ),
+                (egui::Key::D, None, egui::Modifiers::ALT, "Velocidark"),
+            ] {
+                let mut input = key_input(key, modifiers);
+                // Native egui-winit emits Key followed immediately by Text.
+                if let Some(text) = text {
+                    input.events.push(egui::Event::Text(text.into()));
+                }
+                // A modifier may already be released by the time a frame starts.
+                input.modifiers = egui::Modifiers::NONE;
+                theme_shortcut_frame(&mut app, &ctx, input);
+                assert_eq!(app.state.theme.name, theme);
+                let document = app.state.active_document().unwrap();
+                assert_eq!(
+                    document.content, content,
+                    "{mode:?}: {key:?} must not type {text:?}"
+                );
+                assert_eq!(document.revision, revision);
+                assert!(
+                    app.autosave_due.is_none(),
+                    "theme changes are not document edits"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn theme_shortcut_preserves_other_typing_paste_and_ime_in_the_same_frame() {
+        let (_temp, mut app) = test_app("draft");
+        let ctx = egui::Context::default();
+        let mut input = key_input(egui::Key::L, egui::Modifiers::ALT);
+        let shortcut_key = input.events.remove(0);
+        let ordinary_key = key_input(egui::Key::L, egui::Modifiers::NONE)
+            .events
+            .remove(0);
+        let other_shortcut = key_input(egui::Key::D, egui::Modifiers::ALT)
+            .events
+            .remove(0);
+        input.events = vec![
+            egui::Event::Text("l".into()),
+            shortcut_key,
+            egui::Event::Text("l".into()),
+            ordinary_key,
+            egui::Event::Text("l".into()),
+            other_shortcut,
+            egui::Event::Text("d".into()),
+            egui::Event::Paste("literal ld".into()),
+            egui::Event::Ime(egui::ImeEvent::Commit("λ界".into())),
+        ];
+        let mut texts = Vec::new();
+        let mut paste = None;
+        let mut ime = None;
+        let _ = ctx.run_ui(input, |ui| {
+            app.handle_shortcuts(ui.ctx());
+            ui.input(|input| {
+                for event in &input.events {
+                    match event {
+                        egui::Event::Text(text) => texts.push(text.clone()),
+                        egui::Event::Paste(text) => paste = Some(text.clone()),
+                        egui::Event::Ime(egui::ImeEvent::Commit(text)) => ime = Some(text.clone()),
+                        _ => {}
+                    }
+                }
+            });
+        });
+        assert_eq!(app.state.theme.name, "Velocilight");
+        assert_eq!(texts, ["l", "l"], "consume only the shortcut's paired Text");
+        assert_eq!(paste.as_deref(), Some("literal ld"));
+        assert_eq!(ime.as_deref(), Some("λ界"));
+    }
+
+    #[test]
+    fn theme_shortcut_does_not_consume_altgr_or_palette_text() {
+        for palette_open in [false, true] {
+            let (_temp, mut app) = test_app("draft");
+            app.state.theme = ThemeConfig::default_dark();
+            app.state.command_palette_open = palette_open;
+            let ctx = egui::Context::default();
+            let modifiers = if palette_open {
+                egui::Modifiers::ALT
+            } else {
+                egui::Modifiers::ALT | egui::Modifiers::CTRL
+            };
+            let mut input = key_input(egui::Key::L, modifiers);
+            input.events.push(egui::Event::Text("λ".into()));
+            let mut texts = Vec::new();
+            let _ = ctx.run_ui(input, |ui| {
+                app.handle_shortcuts(ui.ctx());
+                texts = ui.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .filter_map(|event| {
+                            if let egui::Event::Text(text) = event {
+                                Some(text.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                });
+            });
+            assert_eq!(app.state.theme.name, "Velocidark");
+            assert_eq!(texts, ["λ"]);
         }
     }
 
