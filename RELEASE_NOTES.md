@@ -16,7 +16,7 @@
 ## Fixed
 
 - Scrolling over the right-hand preview in Split view now scrolls the shared document and keeps both panes synchronized, without clicking the preview first.
-- `Alt+L` and `Alt+D` switch themes without inserting their letters into a focused editor. Ordinary typing, paste, IME input, AltGr, and command-palette behavior are preserved.
+- `Alt+L` and `Alt+D` switch themes without inserting their letters into a focused editor, including when another command arrives in the same frame. Command priority, ordinary typing, paste, IME input, AltGr, and command-palette behavior are preserved.
 - Decoded newline entities in large Markdown paragraphs no longer stall cold preview layout; UTF-8 progress and newline geometry have regression coverage.
 
 ## Verification and limits

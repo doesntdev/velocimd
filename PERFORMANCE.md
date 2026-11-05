@@ -8,7 +8,10 @@ adds shared scrolling from the Split preview, and `f01a398` prevents theme short
 from inserting text into a focused editor. The development candidate passed 127
 tests, strict Clippy, native compilation and wasm32 compilation. Native tests cover
 right-pane wheel scrolling and both theme shortcuts in Edit/Split, with exact note
-preservation and ordinary typing as a positive control.
+preservation and ordinary typing as a positive control. Release integration also
+consumes theme input when a higher-priority command arrives in the same frame;
+the focused-editor regression covers both input orders with mode/Save commands,
+including unchanged selected text, revision, autosave state, and saved bytes.
 
 The plan and qualification records below are historical evidence for the original
 v0.1.5-based performance candidate. Their 122-test count predates the five input

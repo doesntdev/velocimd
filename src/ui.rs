@@ -264,6 +264,14 @@ impl VelocimdApp {
             let command = egui::Modifiers::COMMAND;
             let command_shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
 
+            // Sanitize theme Key/Text pairs even when another command wins below.
+            // An already-open palette still owns its input, including Alt text.
+            let theme_command = if self.state.command_palette_open {
+                None
+            } else {
+                consume_theme_shortcuts(input)
+            };
+
             if input.consume_shortcut(&shortcut(command, egui::Key::K))
                 || input.consume_shortcut(&shortcut(command_shift, egui::Key::P))
             {
@@ -291,7 +299,7 @@ impl VelocimdApp {
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Tab)) {
                 Some(Command::CycleMode)
             } else {
-                consume_theme_shortcuts(input)
+                theme_command
             }
         });
 
@@ -1989,6 +1997,54 @@ mod preview_sync_tests {
                     app.autosave_due.is_none(),
                     "theme changes are not document edits"
                 );
+            }
+
+            // A frame can also contain an earlier-priority mode or Save command.
+            // Keep the real TextEdit focused, with all source selected, so stray
+            // shortcut text would replace the note rather than merely append.
+            app.state.working_folder = Some(_temp.path().to_path_buf());
+            let mode_key = if mode == EditorMode::Edit {
+                egui::Key::Num1
+            } else {
+                egui::Key::Num3
+            };
+            for command_key in [mode_key, egui::Key::S] {
+                for (theme_key, text) in [(egui::Key::L, "l"), (egui::Key::D, "d")] {
+                    for command_first in [false, true] {
+                        theme_shortcut_frame(
+                            &mut app,
+                            &ctx,
+                            key_input(egui::Key::A, egui::Modifiers::COMMAND),
+                        );
+                        let old_theme = app.state.theme.name.clone();
+                        let mut input = key_input(theme_key, egui::Modifiers::ALT);
+                        input.events.push(egui::Event::Text(text.into()));
+                        let command_event = key_input(command_key, egui::Modifiers::COMMAND)
+                            .events
+                            .remove(0);
+                        if command_first {
+                            input.events.insert(0, command_event);
+                        } else {
+                            input.events.push(command_event);
+                        }
+                        input.modifiers = egui::Modifiers::NONE;
+                        theme_shortcut_frame(&mut app, &ctx, input);
+                        assert_eq!(app.state.mode, mode, "mode command retains priority");
+                        assert_eq!(app.state.theme.name, old_theme, "theme must not win");
+                        let document = app.state.active_document().unwrap();
+                        assert_eq!(
+                            document.content, content,
+                            "{mode:?}: {theme_key:?} with {command_key:?} must not replace selected text"
+                        );
+                        assert_eq!(document.revision, revision);
+                        assert!(app.autosave_due.is_none(), "no synthetic document edit");
+                        if command_key == egui::Key::S {
+                            app.finish_background_writes();
+                            let path = app.state.active_document().unwrap().path.as_ref().unwrap();
+                            assert_eq!(fs::read_to_string(path).unwrap(), content);
+                        }
+                    }
+                }
             }
         }
     }
