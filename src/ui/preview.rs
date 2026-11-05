@@ -473,7 +473,8 @@ impl Heights {
         let mut i = index + 1;
         while i < self.0.len() {
             self.0[i] += delta;
-            i += i & i.wrapping_neg();
+            // Advance directly to the next one-based Fenwick parent.
+            i = (i | (i - 1)) + 1;
         }
     }
     fn prefix(&self, end: usize) -> f32 {
@@ -691,7 +692,7 @@ impl PreviewRenderer {
             ui.available_size() - egui::Vec2::splat(f32::from(PREVIEW_FRAME_MARGIN) * 2.0);
         egui::Frame::new()
             .fill(ui.visuals().widgets.noninteractive.bg_fill)
-            .stroke(egui::Stroke::new(1.0, tokens.border))
+            .stroke(egui::Stroke::new(1.0_f32, tokens.border))
             .corner_radius(6)
             .inner_margin(egui::Margin::same(PREVIEW_FRAME_MARGIN))
             .show(ui, |ui| {
