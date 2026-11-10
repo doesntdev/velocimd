@@ -38,6 +38,88 @@ does not certify a newly delivered browser runtime, Windows/macOS GUI behavior,
 or the remaining four performance issues. Keep compact current receipts and one
 useful build cache; generated notes and superseded screenshots are disposable.
 
+## Local issue #11 increment — asynchronous browser drafts
+
+Accepted local source checkpoint `6ca37386d28f2ba684466debee7e83b453bda2ee`
+moves browser drafts to transaction/readback-acknowledged, document-granular
+IndexedDB storage. Legacy recovery bytes, writer coordination, newest-revision
+acknowledgment and lease-drained teardown are preserved. An admitted write remains
+uncertain until verified, so reverting to an older acknowledged body cannot hide a
+possibly committed newer body. Explicit Retry survives an older in-flight failure.
+
+Controller execution at that checkpoint passed 168 Rust, 24 Node and 88 browser
+cases (17 inherited plus 27 persistence cases in each of Chrome and Firefox), with
+independent specification and quality approval. A controlled Chrome comparison
+used real keyboard edits in a 16-note, 4,050,675-byte legacy session: eight measured
+pending-flush calls per variant, after discarding the first. Median synchronous
+main-thread action duration was 28.3 ms for the pre-11 storage entrypoints versus
+0.1 ms for the accepted async implementation. Each save was acknowledged before
+the next edit. This measures synchronous blocking, not total commit latency or
+whole-application typing latency; it is not a browser startup claim.
+
+## Local issue #12 increment — guarded retained-layout reuse
+
+The stock TextEdit, complete canonical galley, selection/caret/IME/undo machinery,
+visible-row painting and gutter culling remain in use. The accelerated path covers
+64 KiB through 4 MiB and at most 32,768 source lines. Ordinary notes and unsupported
+native sizes/shapes retain the previous content-checked path; these eligibility
+bounds never truncate source or change file/import/session limits.
+
+An immediate derived epoch observes each successful actual buffer mutation before
+the controller publishes its one completed revision. Trusted layouter calls also
+require a live matching RecordingBuffer attachment; a type tag alone is not a
+proof. Overflow and unknown origins fall back safely. Revision adoption requires
+the exact final epoch and actual TextEdit output Arc. One active layout/numbered-row
+index and a weak backend token are retained, not a history of document bodies or
+width variants. These are bounds on the new cache, not a total process-memory cap;
+stock widget undo snapshots and canonical full-layout payloads still exist.
+
+The narrowly modified, locked epaint 0.34.1 crate is under
+`vendor/epaint-0.34.1/`. `UPSTREAM.json` records the lock-authenticated original
+archive, original-file inventory and exact upstream license sources. Only
+`src/text/fonts.rs` and its type re-export are behavior/source changes relative to
+that crate. New opt-in APIs validate font/cache/scale/galley identities, retain
+paragraph children without cloning/hashing source, and force canonical rebuilding
+on stale handles or missing children. Default layout and GC behavior are unchanged.
+A same-pass identity check avoids refreshing all children twice for measurement
+and widget layout; it never replaces the new-pass refresh. Include this modified
+crate and its licenses in corresponding-source offers, and requalify the narrow
+patch before changing the pinned backend version. Do not patch the shared registry.
+
+In one paired, optimized native CPU qualification, large-document warm/scroll
+layout calls requested zero outer source copies/hashes instead of one full job per
+frame. Six typing frames reduced outer copy/hash operands from 3,744,084 to
+2,016,050 bytes for the long paragraph and from 3,666,084 to 1,974,050 for short
+lines. These are source-connected operation counts, not hardware traffic. Warm
+frame medians were 0.1264 to 0.0647 ms (long paragraph) and 0.1146 to 0.0985 ms
+(short lines). Timings are short sequential CPU samples, not a frame-rate promise;
+typing results remain mixed and a single huge paragraph still needs full shaping.
+Width changes still require a full canonical job; redundant source comparisons
+are avoided but reflow itself is not virtualized. Normal-note copy/hash requests
+are unchanged. Existing public token and actual-editor regressions cover retention
+after idle, font/atlas replacement, selection/IME events, exact source and revision
+publication. The production matrix can be invoked with
+`ISSUE12_TRACKED_ONLY=1 cargo test --locked --release --lib actual_textedit_matrix -- --ignored --nocapture --test-threads=1`.
+
+A real browser regression additionally found an inherited input-adapter conflict:
+Chromium's hidden text-input history could echo the last Unicode insertion while
+egui also performed redo. The identical failure reproduced on the accepted
+pre-#12 baseline. The host now identifies the pinned SDK's actual newly created
+text agent by startup element identity and cancels only its cancelable,
+non-composing native historyUndo/historyRedo beforeinput actions. Keyboard events
+still reach egui; normal text/composition and the separate HTML filename dialog
+are untouched. Real selection/Unicode undo-redo and guard negative controls are
+part of the browser suite; native input handling is unchanged.
+
+This is a bounded retained-layout improvement, **not** incremental text storage or
+a fully viewport-paged editor. It does not solve the remaining stock TextEdit
+snapshots, giant-paragraph reflow or all large-document tail latency. The wider
+issue remains open; local code/testing is not publication or deployment.
+
+Historical target/scratch paths below are original execution pointers, not current
+retention promises. Earlier generated targets were removed at the owner's request;
+those historical measurements have not been relabeled as fresh execution.
+
 ## v0.1.6 integration
 
 The performance implementation and both subsequent input fixes are included in the

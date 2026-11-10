@@ -144,10 +144,57 @@ impl LineMetadata {
     }
 }
 
+/// Immediate layout identity; overflow permanently disables trusted reuse.
+/// This is derived UI state only, never a document/persistence revision.
+pub(super) struct MutationEpoch {
+    value: std::cell::Cell<Option<u64>>,
+    lines: std::cell::Cell<usize>,
+    recording_source: std::cell::Cell<Option<(usize, usize)>>,
+}
+
+impl Default for MutationEpoch {
+    fn default() -> Self {
+        Self {
+            value: std::cell::Cell::new(Some(0)),
+            lines: std::cell::Cell::new(1),
+            recording_source: std::cell::Cell::new(None),
+        }
+    }
+}
+
+impl MutationEpoch {
+    pub fn value(&self) -> Option<u64> {
+        self.value.get()
+    }
+    pub fn lines(&self) -> usize {
+        self.lines.get()
+    }
+    pub fn set_lines(&self, lines: usize) {
+        self.lines.set(lines);
+    }
+    pub fn matches_recording_source(&self, text: &str) -> bool {
+        self.recording_source.get() == Some((text.as_ptr() as usize, text.len()))
+    }
+    fn bind_recording_source(&self, text: &str) {
+        self.recording_source
+            .set(Some((text.as_ptr() as usize, text.len())));
+    }
+    pub fn advance(&self) {
+        self.value
+            .set(self.value.get().and_then(|v| v.checked_add(1)));
+    }
+    #[cfg(test)]
+    pub fn force_overflow(&self) {
+        self.value.set(Some(u64::MAX));
+        self.advance();
+    }
+}
+
 pub(super) struct RecordingBuffer<'a> {
     content: &'a mut String,
     index: &'a mut LineMetadata,
     edits: Vec<EditDelta>,
+    epoch: Option<&'a MutationEpoch>,
 }
 
 impl<'a> RecordingBuffer<'a> {
@@ -157,11 +204,28 @@ impl<'a> RecordingBuffer<'a> {
             content,
             index,
             edits: Vec::new(),
+            epoch: None,
         }
     }
 
-    pub fn finish(self) -> Vec<EditDelta> {
-        self.edits
+    pub fn tracked(
+        content: &'a mut String,
+        index: &'a mut LineMetadata,
+        epoch: &'a MutationEpoch,
+    ) -> Self {
+        let mut buffer = Self::new(content, index);
+        epoch.set_lines(buffer.index.line_starts.len());
+        epoch.bind_recording_source(buffer.content);
+        buffer.epoch = Some(epoch);
+        buffer
+    }
+
+    pub fn is_recording(text: &dyn TextBuffer) -> bool {
+        text.type_id() == TypeId::of::<RecordingBuffer<'static>>()
+    }
+
+    pub fn finish(mut self) -> Vec<EditDelta> {
+        std::mem::take(&mut self.edits)
     }
 
     fn replace(&mut self, chars: Range<usize>, text: &str, replacement: bool) -> usize {
@@ -175,6 +239,11 @@ impl<'a> RecordingBuffer<'a> {
         let (count, removed_newlines, inserted_newlines) =
             self.index.apply(chars, bytes.clone(), text);
         self.content.replace_range(bytes.clone(), text);
+        if let Some(epoch) = self.epoch {
+            epoch.advance();
+            epoch.set_lines(self.index.line_starts.len());
+            epoch.bind_recording_source(self.content);
+        }
         self.edits.push(EditDelta {
             bytes,
             inserted: text.to_owned(),
@@ -183,6 +252,18 @@ impl<'a> RecordingBuffer<'a> {
             replacement,
         });
         count
+    }
+}
+
+impl Drop for RecordingBuffer<'_> {
+    fn drop(&mut self) {
+        if let Some(epoch) = self.epoch
+            && epoch.matches_recording_source(self.content)
+        {
+            // A type tag alone does not prove a live mutation-tracked buffer.
+            // Clear only this attachment; another buffer may share the clock.
+            epoch.recording_source.set(None);
+        }
     }
 }
 

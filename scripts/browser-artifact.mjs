@@ -1,4 +1,4 @@
-// Browser artifact format v1. Kept byte-identical in producer and website consumer.
+// Browser artifact format v1. Producer checks include complete patched dependency source.
 // Trust comes from the explicitly approved archive/manifest pin, not a self-signed receipt.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -29,6 +29,11 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   assert hashlib.sha256(z.read(i)).hexdigest()==expected[i.filename], 'Source archive hash mismatch: '+i.filename
  cargo=tomllib.loads(z.read('velocimd/Cargo.toml').decode())
  lock=tomllib.loads(z.read('velocimd/Cargo.lock').decode())
+ if cargo.get('patch',{}).get('crates-io',{}).get('epaint',{}).get('path')=='vendor/epaint-0.34.1':
+  prefix='velocimd/vendor/epaint-0.34.1/'
+  upstream=json.loads(z.read(prefix+'UPSTREAM.json'))
+  for name in [*upstream['files'], *upstream['supplemental_upstream_licenses']]:
+   assert prefix+name in expected, 'Missing modified dependency source: '+name
  contract=json.loads(z.read('velocimd/tests/parity/contract.json'))
  packages={p['name']:p['version'] for p in lock['package'] if p['name'] in ['pulldown-cmark','wasm-bindgen','web-time','egui','eframe']}
  print(json.dumps({'version':cargo['package']['version'],'contract':contract,'rustPackages':packages}))

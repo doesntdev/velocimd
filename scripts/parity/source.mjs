@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { sha, safeSourcePath } from '../browser-artifact.mjs'
 
 const rootNames = new Set(['Cargo.toml','Cargo.lock','build.rs','Packager.toml','LICENSE','README.md','RELEASE_NOTES.md','index.html','rust-toolchain.toml','package.json','pnpm-lock.yaml','.gitignore','.gitattributes'])
-const sourcePrefixes = ['src/','web/','assets/','scripts/','tests/','examples/','.github/workflows/','docs/']
+const sourcePrefixes = ['vendor/epaint-0.34.1/','src/','web/','assets/','scripts/','tests/','examples/','.github/workflows/','docs/']
 export const isSource = name => safeSourcePath(name) && (rootNames.has(name) || sourcePrefixes.some(prefix=>name.startsWith(prefix)))
 
 export async function inventorySource(root) {
@@ -19,7 +19,9 @@ export async function inventorySource(root) {
     assert(info.isFile() && !info.isSymbolicLink(),`Nonregular source input: ${name}`)
     files[name]=sha(await readFile(join(root,name)))
   }
-  for(const name of ['Cargo.toml','Cargo.lock','src/lib.rs','src/ui.rs','web/browser-store.js','index.html','LICENSE','tests/parity/contract.json'])assert(files[name],`Missing build/source input: ${name}`)
+  for(const name of ['Cargo.toml','Cargo.lock','src/lib.rs','src/ui.rs','web/browser-store.js','index.html','LICENSE','vendor/epaint-0.34.1/UPSTREAM.json','vendor/epaint-0.34.1/src/text/fonts.rs','vendor/epaint-0.34.1/LICENSE-MIT','vendor/epaint-0.34.1/LICENSE-APACHE','tests/parity/contract.json'])assert(files[name],`Missing build/source input: ${name}`)
+  const upstream=JSON.parse(await readFile(join(root,'vendor/epaint-0.34.1/UPSTREAM.json'),'utf8'))
+  for(const name of [...Object.keys(upstream.files),...Object.keys(upstream.supplemental_upstream_licenses)])assert(files['vendor/epaint-0.34.1/'+name],`Missing modified dependency source: ${name}`)
   const untracked=git('ls-files','--others','--exclude-standard','-z').split('\0').some(name=>Object.hasOwn(files,name))
   const changed=git('diff','--name-only','-z','HEAD').split('\0').some(isSource)
   return {baseCommit:git('rev-parse','HEAD').trim(),modifiedBrowserBuild:untracked||changed||missing.length>0,sha256:sha(JSON.stringify(files)),files}

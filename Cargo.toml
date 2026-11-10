@@ -8,6 +8,9 @@ authors = ["Logan Hart"]
 repository = "https://github.com/doesntdev/velocimd"
 build = "build.rs"
 
+[patch.crates-io]
+epaint = { path = "vendor/epaint-0.34.1" }
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"

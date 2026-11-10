@@ -93,7 +93,7 @@ try {
     await page.keyboard.press('Enter');
     await page.keyboard.insertText('Actual egui edit — café 🦀');
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => JSON.parse(window.velocimd.active_document()).content.includes('Actual egui edit'));
+    await page.waitForFunction(() => JSON.parse(window.velocimd.active_document()).content === '# Browser QA\n\nActual egui edit — café 🦀\n');
     assert.equal((await active(page)).content,'# Browser QA\n\nActual egui edit — café 🦀\n');
     // Prove debounce reaches a completed real IndexedDB transaction without Retry.
     await page.waitForFunction(() => !JSON.parse(window.velocimd.snapshot()).pending);
@@ -120,6 +120,50 @@ try {
     await page.keyboard.press('Enter');
     await page.waitForFunction(()=>JSON.parse(window.velocimd.snapshot()).mode==='Edit');
     assert((await active(page)).content.includes('Actual egui edit'));
+  });
+  await test('Unicode selection undo/redo has one egui owner and no native hidden-input echo',async()=>{
+    const isolated=await browser.newContext({viewport:{width:1280,height:800}});
+    const p=await isolated.newPage();p.on('pageerror',e=>errors.push(String(e)));
+    try {
+      await ready(p);
+      const original='alpha e\u0301 🦀\r\n';const edited='猫'+original.slice(1);
+      await p.setInputFiles('#file',{name:'undo.md',mimeType:'text/markdown',buffer:Buffer.from(original)});
+      await p.waitForFunction(s=>JSON.parse(velocimd.active_document()).content===s,original);
+      await click(p,'toolbar:edit');const r=(await probe(p)).regions.editor;
+      await p.mouse.click(r[0]+70,r[1]+30);await p.keyboard.press('Control+Home');await p.keyboard.press('Shift+ArrowRight');
+      await p.waitForTimeout(1200);
+      await p.keyboard.insertText('猫');await p.waitForFunction(s=>JSON.parse(velocimd.active_document()).content===s,edited);
+      await p.keyboard.press('Control+z');await p.waitForFunction(s=>JSON.parse(velocimd.active_document()).content===s,original);
+      await p.keyboard.press('Control+Shift+z');await p.waitForFunction(s=>JSON.parse(velocimd.active_document()).content===s,edited);
+      const guards=await p.evaluate(()=>{
+        const agent=document.activeElement;if(!(agent instanceof HTMLInputElement)||agent.id)throw Error('Expected the actual focused eframe text agent');
+        const prevented=(target,inputType,isComposing=false)=>{const e=new InputEvent('beforeinput',{bubbles:true,cancelable:true,inputType,isComposing});target.dispatchEvent(e);return e.defaultPrevented;};
+        return [prevented(agent,'historyUndo'),prevented(agent,'historyRedo'),prevented(agent,'insertText'),prevented(agent,'insertCompositionText',true),prevented(agent,'historyUndo',true),prevented(document.getElementById('download-name'),'historyUndo')];
+      });
+      assert.deepEqual(guards,[true,true,false,false,false,false]);
+      await p.evaluate(()=>velocimd.action('flush',0));await p.waitForFunction(()=>!JSON.parse(velocimd.snapshot()).pending);
+      assert.equal((await active(p)).content,edited);
+    }finally{await isolated.close();await page.bringToFront();}
+  });
+  await test('incompatible text-agent assembly releases its writer and preserves migrated bytes',async()=>{
+    const isolated=await browser.newContext({viewport:{width:1280,height:800}});
+    const p=await isolated.newPage();
+    const content='retained adapter recovery 🦀\r\n';
+    const raw=JSON.stringify({version:1,documents:[{title:'guard.md',content}],active:0,mode:'Edit',split_ratio:0.5,light:false});
+    try {
+      await p.addInitScript(raw=>{
+        localStorage.setItem('velocimd.browser-drafts.v1',raw);
+        const observer=new MutationObserver(records=>{
+          if(records.some(r=>[...r.addedNodes].some(n=>n instanceof HTMLInputElement&&n.type==='text'&&n.autofocus&&!n.id&&n.parentElement===document.body))){
+            observer.disconnect();const extra=document.createElement('input');extra.type='text';extra.autofocus=true;document.body.append(extra);
+          }
+        });observer.observe(document,{childList:true,subtree:true});
+      },raw);
+      await p.goto(url);await p.waitForFunction(()=>document.getElementById('error').textContent.includes('text-input adapter changed'));
+      assert.notEqual(await p.evaluate(()=>document.documentElement.dataset.ready),'true');
+      await p.waitForFunction(async()=>!(await navigator.locks.query()).held.some(l=>l.name==='velocimd.browser-drafts.v1.writer'));
+      const peer=await isolated.newPage();await ready(peer);assert.equal((await active(peer)).content,content);assert.equal((await state(peer)).error,null);
+    }finally{await isolated.close();await page.bringToFront();}
   });
   const imported = Buffer.from('\ufeff# Imported\r\n\r\ncafé 🦀\r\nNo final newline');
   await test('import and exact active UTF-8/CRLF/BOM download', async () => {

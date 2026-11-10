@@ -202,7 +202,19 @@
     try {
       const {default:init,WebHandle,validate_browser_drafts}=await import('./velocimd.js');
       globalThis.velocimdValidateDrafts=validate_browser_drafts;
+      const priorInputs=new Set(document.querySelectorAll('input'));
       await init();handle=new WebHandle();await handle.start($('velocimd-canvas'));
+      // The pinned eframe SDK creates one body-direct input for IME/mobile text.
+      // Its native history is not the editor's undo history: Chromium can replay
+      // its old value as new text while egui also handles the keyboard command.
+      const agents=[...document.body.children].filter(node => node instanceof HTMLInputElement && node.type==='text' && node.autofocus && !priorInputs.has(node));
+      if(agents.length!==1){
+        handle.free();handle=undefined;
+        throw new Error('Browser text-input adapter changed; editor startup needs requalification.');
+      }
+      agents[0].addEventListener('beforeinput',event => {
+        if(event.cancelable && !event.isComposing && (event.inputType==='historyUndo'||event.inputType==='historyRedo'))event.preventDefault();
+      });
       window.velocimd=handle;sync();document.documentElement.dataset.ready='true';
       if(window.parent!==window)window.parent.postMessage({type:'velocimd-ready'},location.origin);
     }catch(error) {

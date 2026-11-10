@@ -668,10 +668,14 @@ impl VelocimdApp {
                 let gutter_width = editor_gutter_width(digit_count);
                 let wrap_width =
                     (ui.available_width() - gutter_width - 1.0 - editor_margin * 2.0).max(1.0);
-                let galley = self.editor_layout.layout(
+                let epoch = self
+                    .editor_layout
+                    .begin_tracked((document.id, document.revision), line_count);
+                let galley = self.editor_layout.layout_known(
                     ui,
                     (document.id, document.revision),
                     &document.content,
+                    &epoch,
                     &editor_font,
                     wrap_width,
                 );
@@ -718,13 +722,19 @@ impl VelocimdApp {
             egui::pos2(separator_x + 1.0, outer_rect.top()),
             outer_rect.right_bottom(),
         );
+        let epoch = self
+            .editor_layout
+            .begin_tracked((document.id, document.revision), line_count);
         let layout = &mut self.editor_layout;
         let identity = (document.id, document.revision);
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width: f32| {
-            layout.layout(ui, identity, text.as_str(), &editor_font, width)
+            layout.layout_recording(ui, identity, text, &epoch, &editor_font, width)
         };
-        let mut buffer =
-            RecordingBuffer::new(&mut document.content, &mut self.line_metadata.metadata);
+        let mut buffer = RecordingBuffer::tracked(
+            &mut document.content,
+            &mut self.line_metadata.metadata,
+            &epoch,
+        );
         let text_output = ui
             .scope_builder(
                 egui::UiBuilder::new()
@@ -756,6 +766,12 @@ impl VelocimdApp {
         if changed {
             let before = document.revision;
             document.mark_changed();
+            self.editor_layout.finish_tracked(
+                identity,
+                document.revision,
+                epoch.value(),
+                &text_output.galley,
+            );
             self.line_metadata
                 .finish_edit(document.id, before, document.revision);
             self.preview_renderer
