@@ -1,28 +1,203 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Velocimd</title>
-    <style>
-      html,
-      body,
-      canvas {
-        width: 100%;
-        height: 100%;
-        margin: 0;
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Velocimd — browser editor</title>
+  <style>
+    :root { color-scheme:dark; font:14px system-ui,sans-serif; background:#0d0f15; color:#dde1ea; }
+    * { box-sizing:border-box; }
+    html,body,#editor { width:100%;height:100%;margin:0;overflow:hidden; }
+    canvas { width:100%;height:100%;display:block; }
+    [hidden] { display:none!important; }
+    #notice { position:fixed;bottom:12px;right:12px;max-width:min(520px,calc(100% - 24px));padding:12px;background:#12141b;border:1px solid #56516f;border-radius:6px;z-index:2; }
+    #status,#error { margin:0 0 6px;line-height:1.4;overflow-wrap:anywhere; }
+    #error { color:#ffb5c6; } #error:empty { display:none; }
+    button,input { font:inherit;color:inherit;background:#1e212b;border:1px solid #56516f;border-radius:5px;padding:6px 9px; }
+    button { cursor:pointer; }
+    dialog { color:inherit;background:#12141b;border:1px solid #56516f;border-radius:6px;max-width:480px; }
+    dialog::backdrop { background:#0008; }
+    dialog input { width:100%;margin:8px 0; }
+    dialog p { line-height:1.4; }
+    :root[data-light="true"] { color-scheme:light;background:#f4f5f7;color:#1c2028; }
+    :root[data-light="true"] #notice,:root[data-light="true"] dialog { background:#ebedf2; }
+    :root[data-light="true"] button,:root[data-light="true"] input { color:#1c2028;background:#fff; }
+    :root[data-light="true"] #error { color:#a52041; }
+  </style>
+</head>
+<body>
+  <main id="editor"><canvas id="velocimd-canvas" aria-label="Velocimd Markdown editor and preview"></canvas></main>
+  <input id="file" type="file" accept=".md,.markdown" hidden>
+  <!-- Only startup/failure/recovery affordances live in HTML. Ordinary editor
+       commands, tabs, filename, mode and theme are the shared native egui UI. -->
+  <aside id="notice" aria-label="Browser draft recovery">
+    <p id="status" role="status">Starting the Rust/WASM editor…</p>
+    <p id="error" role="alert"></p>
+    <button id="retry" hidden>Retry draft save</button>
+    <button id="recovery" hidden>Download stored recovery</button>
+    <button id="replace" hidden>Replace stored drafts…</button>
+    <button id="dismiss" hidden>Dismiss</button>
+  </aside>
+  <dialog id="save-as" aria-labelledby="save-as-title">
+    <form id="save-form">
+      <h2 id="save-as-title">Download Markdown copy</h2>
+      <p>Choose a filename for this copy. Browser drafts are local to this origin; imported disk files are never overwritten. Folder navigation and disk-write permissions require the desktop app.</p>
+      <label for="download-name">Filename</label>
+      <input id="download-name" maxlength="160" required>
+      <p id="name-error" role="alert"></p>
+      <button id="save-copy" type="submit">Download copy</button>
+      <button id="cancel-copy" type="button">Cancel</button>
+    </form>
+  </dialog>
+  <script type="module">
+    const $ = id => document.getElementById(id);
+    let handle;
+    let operationError = '';
+    let importGeneration;
+    let downloadCopy;
+    // One live editor per origin. Hold the lease until the actual App has flushed
+    // and been destroyed, including pagehide and back-forward-cache transitions.
+    globalThis.velocimdAcquireLease = () => new Promise((resolve,reject) => {
+      if (!navigator.locks?.request) {
+        reject(new Error('This browser needs Web Locks to protect local drafts. Use a current browser or the desktop app.'));
+        return;
       }
-    </style>
-  </head>
-  <body>
-    <canvas id="velocimd-canvas"></canvas>
-    <script type="module">
-      import init, { WebHandle } from '/velocimd.js';
-
-      await init();
-      const canvas = document.getElementById('velocimd-canvas');
-      const handle = new WebHandle();
-      window.velocimd = handle;
-      await handle.start(canvas);
-    </script>
-  </body>
+      navigator.locks.request('velocimd.browser-drafts.v1.writer', {mode:'exclusive',ifAvailable:true}, lock => {
+        if (!lock) {
+          reject(new Error('Another Velocimd editor is open. Close it, then reload here.'));
+          return;
+        }
+        return new Promise(release => resolve(release));
+      }).catch(reject);
+    });
+    globalThis.velocimdReleaseLease = release => { if (typeof release === 'function') release(); };
+    // Rust calls this while WebRunner owns app_mut. A microtask cannot dispatch
+    // listeners (and any resulting bridge calls) until that borrow has ended.
+    globalThis.velocimdQueueEvent = (name,detail) => queueMicrotask(() => {
+      if (handle) window.dispatchEvent(new CustomEvent(name,{detail}));
+    });
+    function showError(error) {
+      operationError=String(error);
+      $('notice').hidden=false;$('error').textContent=operationError;
+      $('dismiss').hidden=!handle || document.documentElement.dataset.ready!=='true';
+    }
+    function update(raw) {
+      const state = JSON.parse(raw);
+      window.velocimdState = state;
+      document.documentElement.dataset.light = state.light;
+      const error = operationError || state.error || '';
+      $('error').textContent = error;
+      $('status').textContent = state.pending ? 'Browser changes pending · download files for a backup' : state.status;
+      $('notice').hidden = !error && !state.recovery;
+      $('retry').hidden = !state.error;
+      $('recovery').hidden = !state.recovery;
+      $('replace').hidden = !state.recovery;
+      $('dismiss').hidden = !operationError || !!state.error;
+    }
+    function sync() {
+      if (handle) update(handle.snapshot());
+      else if (operationError) {
+        $('notice').hidden=false; $('error').textContent=operationError;
+      }
+    }
+    function action(name,index=0) {
+      try { operationError='';handle.action(name,index);sync(); }
+      catch(error) { showError(error); }
+    }
+    function download(name,content,type='text/markdown;charset=utf-8') {
+      const url=URL.createObjectURL(new Blob([content],{type}));
+      const link=document.createElement('a');link.href=url;link.download=name;
+      document.body.append(link);link.click();link.remove();
+      setTimeout(() => URL.revokeObjectURL(url),30_000);
+    }
+    window.addEventListener('velocimd-state',e => update(e.detail));
+    window.addEventListener('velocimd-effect',e => {
+      if (!handle || document.documentElement.dataset.ready !== 'true') return;
+      try {
+        operationError='';
+        const effect=JSON.parse(e.detail);
+        if (effect.kind==='open') {
+          importGeneration=effect.generation;
+          $('file').click();
+        } else if (effect.kind==='close') {
+          if(confirm('Close this browser draft? Download a copy first if you need to keep it.')) {
+            handle.close_document(effect.generation,effect.index);
+          }
+        } else if (effect.kind==='save') {
+          download(effect.document.title,effect.document.content);
+        } else if (effect.kind==='save-as') {
+          downloadCopy=effect.document;
+          $('download-name').value=downloadCopy.title;
+          $('name-error').textContent='';
+          $('save-as').showModal();
+          $('download-name').select();
+        }
+        sync();
+      } catch(error) { showError(error); }
+    });
+    $('file').onchange=async e => {
+      const file=e.target.files?.[0];e.target.value='';
+      if (!file || !handle) return;
+      const owner=handle;
+      const generation=importGeneration ?? owner.begin_import();
+      importGeneration=undefined;
+      try {
+        if (!/\.(md|markdown)$/i.test(file.name)) throw new Error('Choose a .md or .markdown file');
+        if (file.size>1024*1024) throw new Error('Import limit is 1 MiB per Markdown file');
+        const bytes=new Uint8Array(await file.arrayBuffer());
+        if (handle!==owner) return;
+        owner.complete_import(generation,file.name,bytes);
+        operationError='';sync();
+      } catch(error) { if(handle===owner)showError(error); }
+    };
+    $('file').addEventListener('cancel',() => { importGeneration=undefined; });
+    $('save-form').onsubmit=e => {
+      e.preventDefault();
+      const name=$('download-name').value.trim();
+      if (!name || new TextEncoder().encode(name).length>160 || /[\x00-\x1f\x7f\\/:*?"<>|]/.test(name) || !/^.+\.(md|markdown)$/i.test(name)) {
+        $('name-error').textContent='Use a .md or .markdown filename (1–160 bytes, no path separators or control characters).';return;
+      }
+      try { download(name,downloadCopy.content);$('save-as').close(); }
+      catch(error) { showError(error); }
+    };
+    $('cancel-copy').onclick=() => $('save-as').close();
+    $('save-as').addEventListener('close',() => { downloadCopy=undefined; });
+    $('recovery').onclick=() => {
+      const raw=handle.recovery_drafts();
+      if(raw!=null)download('velocimd-stored-recovery.json',raw,'application/json;charset=utf-8');
+    };
+    $('replace').onclick=() => {
+      if(confirm('Replace stored drafts with the open tabs? A verified copy of the old bytes must first fit in localStorage. Download stored recovery and your open notes before proceeding.'))action('replace-recovery');
+    };
+    $('retry').onclick=() => action('retry');
+    $('dismiss').onclick=() => { operationError='';sync(); };
+    document.addEventListener('visibilitychange',() => { if(document.hidden&&handle)action('flush'); });
+    window.addEventListener('pagehide',() => {
+      if(handle&&document.documentElement.dataset.ready==='true') {
+        action('flush');handle.free();handle=undefined;window.velocimd=undefined;
+        document.documentElement.dataset.ready='false';importGeneration=undefined;downloadCopy=undefined;
+      }
+    });
+    window.addEventListener('pageshow',e => { if(e.persisted)location.reload(); });
+    window.addEventListener('beforeunload',e => {
+      if(!handle||document.documentElement.dataset.ready!=='true')return;
+      try {
+        handle.action('flush',0);
+        const state=JSON.parse(handle.snapshot());
+        if(state.pending||state.error){e.preventDefault();e.returnValue='';}
+      }catch{e.preventDefault();e.returnValue='';}
+    });
+    try {
+      const {default:init,WebHandle}=await import('./velocimd.js');
+      await init();handle=new WebHandle();await handle.start($('velocimd-canvas'));
+      window.velocimd=handle;sync();document.documentElement.dataset.ready='true';
+      if(window.parent!==window)window.parent.postMessage({type:'velocimd-ready'},location.origin);
+    }catch(error) {
+      $('status').textContent='Editor could not start. Reload to retry; stored drafts have not been cleared.';
+      showError(error);
+      if(window.parent!==window)window.parent.postMessage({type:'velocimd-error',message:String(error)},location.origin);
+    }
+  </script>
+</body>
 </html>

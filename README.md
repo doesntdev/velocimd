@@ -82,6 +82,83 @@ cd velocimd
 cargo run --release
 ```
 
+## Browser build (real Rust/WASM editor)
+
+The standalone browser app runs the same `VelocimdApp` egui editor and preview,
+with document tabs instead of native folder tabs. It does not write to the
+imported file or access a desktop working folder.
+
+```bash
+rustup target add wasm32-unknown-unknown
+# Match Cargo.lock exactly (currently 0.2.120):
+cargo install wasm-bindgen-cli --version 0.2.120 --locked
+bash scripts/build-web.sh
+python3 -m http.server 8080 --directory target/web --bind 127.0.0.1
+# Open http://127.0.0.1:8080/
+```
+
+`WASM_BINDGEN=/absolute/path/to/wasm-bindgen bash scripts/build-web.sh` is
+supported when the CLI is not on PATH. The script refuses a mismatched CLI,
+uses the existing Cargo target cache, and produces `target/web/index.html`,
+`target/web/velocimd.js`, and `target/web/velocimd_bg.wasm`. Copy these assets
+together if serving at a subdirectory; no root-relative asset URL is required.
+Serve over HTTPS or localhost, not `file://`. WebGL and the Web Locks API are
+required. Keep the supplied HTML host together with the generated module: its
+lease-provider functions are part of the `WebHandle::start` contract.
+
+- **New**, **Import .md**, document selection, **Close tab**, and **Download .md**
+  operate on the actual active egui document. Import accepts `.md`/`.markdown`,
+  valid UTF-8, up to 1 MiB; imported bytes (including BOM, CRLF, and missing final
+  newline) are preserved until edited. Download exports the exact active content.
+- Edit, Split, Preview and light/dark controls share the real editor state.
+  Rename the active note using the filename field inside the editor.
+- Local browser drafts restore tabs, contents, selection, mode, divider and theme
+  from `localStorage` on the same origin. Edits autosave after a short debounce;
+  page-hide/unload also attempts a synchronous flush. Limits: 16 open tabs and
+  4 MiB serialized drafts. This is **not a backup or filesystem autosave**;
+  clearing site data/private browsing or storage eviction can remove drafts.
+- One active editor per origin holds an exclusive Web Lock from before App
+  construction through teardown, covering every save/recovery/shutdown path. A
+  second editor cannot start until the first closes. Reload or Retry afterward.
+  Browsers without Web Locks fail closed rather than running an unsafe writer.
+- Storage denial, quota failure and outside-storage changes are visible. Notes
+  remain editable and downloadable in memory; **Retry draft save** retries
+  durability. Download each open note before leaving if a warning remains.
+- Malformed/unsupported stored data is left intact, not autosaved over with a
+  fresh session. **Download stored recovery** exports its original bytes.
+  **Replace stored drafts…** requires confirmation and a verified localStorage
+  backup at `velocimd.browser-drafts.v1.recovery` before replacement; it refuses
+  if storage is full or unreadable. Download recovery first for an external copy.
+- Import reads are token-bound: newer imports, New, Close or a document selection
+  invalidate an older asynchronous completion. Cancellation does not change notes.
+- Browser native-folder shortcuts explain the browser controls instead of calling
+  filesystem APIs. Desktop folder/session/autosave behavior is unchanged. Local
+  image-file access remains desktop-only; this browser adapter does not import
+  image attachments. Embedded font coverage may omit some emoji glyphs without
+  changing their source/download bytes.
+
+`render_markdown(source)` is also exported from the generated WASM module. It
+forwards to the existing `markdown::render_to_html` helper unchanged; this is an
+HTML generation API, not the egui editor's native preview rendering path.
+
+### Browser regression smoke
+
+After building, install/use Playwright externally (no Node production dependency
+is required by the app), then run:
+
+```bash
+PLAYWRIGHT_MODULE=/absolute/path/to/node_modules/playwright \
+CHROME=/absolute/path/to/chrome \
+EVIDENCE_DIR=/absolute/path/to/evidence node scripts/test-web.mjs
+```
+
+The harness serves the generated assets locally at `/demo/`, launches Chrome
+**with its sandbox enabled**, uses disposable contexts and synthetic notes,
+exercises real keyboard editing/import/download/reload and failure recovery,
+and saves screenshots plus `results.json`. It closes its browser and HTTP server.
+Also run `cargo fmt --check`, `cargo test`, and
+`cargo check --locked --lib --target wasm32-unknown-unknown`.
+
 ## Usage
 
 On first launch, choose a working folder. New Markdown files are saved there by
@@ -148,7 +225,7 @@ choose its destination.
 
 Requirements:
 
-- Rust stable
+- The pinned Rust toolchain in `rust-toolchain.toml`
 - Platform build dependencies required by `eframe`/`wgpu`
 
 Common commands:
@@ -159,6 +236,17 @@ cargo test --locked
 cargo clippy --all-targets --all-features
 cargo run
 ```
+
+The desktop/browser parity gate uses the same entrypoint locally and in CI:
+
+```bash
+python3 scripts/verify-parity.py
+```
+
+It verifies both real runtimes, shared control geometry, native reference images,
+Chromium/Firefox journeys and the source-bound browser artifact. See
+[desktop/browser parity](docs/browser-parity.md) for one-time prerequisites,
+intentional platform differences, baseline policy and website promotion.
 
 Linux native smoke (isolated Xvfb display and temporary notes/config):
 

@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "name": "shared-egui-editor",
+  "reference": {
+    "release": "v0.1.6",
+    "commit": "54df0b5b8da5e04775378fe581f7386cac096241",
+    "nativeBinarySha256": "c7500f48dcdb47fa264b0390b4e326199fca8e16567f64b640e14c9603cc834b",
+    "platform": "linux-x11-software-gl"
+  },
+  "viewport": { "width": 1280, "height": 800, "scale": 1 },
+  "toolbarIds": [
+    "toolbar:new", "toolbar:open-folder", "toolbar:open-file", "toolbar:save",
+    "toolbar:save-as", "toolbar:close", "toolbar:edit", "toolbar:split",
+    "toolbar:preview", "toolbar:cycle", "toolbar:theme"
+  ],
+  "geometryTolerancePoints": 0.75,
+  "cases": [
+    { "id": "dark-edit", "mode": "Edit", "light": false, "splitRatio": 0.5 },
+    { "id": "dark-split", "mode": "Split", "light": false, "splitRatio": 0.5 },
+    { "id": "dark-preview", "mode": "Preview", "light": false, "splitRatio": 0.5 },
+    { "id": "light-edit", "mode": "Edit", "light": true, "splitRatio": 0.5 },
+    { "id": "light-split", "mode": "Split", "light": true, "splitRatio": 0.5 },
+    { "id": "light-preview", "mode": "Preview", "light": true, "splitRatio": 0.5 }
+  ],
+  "requiredJourneys": {
+    "native": [
+      "capture-preserves-document",
+      "actual-mode-controls-preserve-document",
+      "actual-theme-control-preserves-document",
+      "new-rename-real-editor-input-and-disk-save",
+      "undo-redo-through-real-input",
+      "split-divider-pointer-input",
+      "palette-search-executes-without-source-mutation",
+      "actual-open-file-chooser",
+      "actual-save-as-chooser-retains-original"
+    ],
+    "browser": [
+      "actual-mode-controls-and-theme-without-source-mutation",
+      "new-rename-and-real-multiline-editor-input",
+      "split-divider-pointer-input-persists-layout",
+      "actual-open-file-picker-import-and-save-download-preserve-bytes",
+      "save-as-named-copy",
+      "reload-restores-real-saved-draft-and-split-ratio",
+      "close-requires-confirmation-cancel-keeps-draft",
+      "palette-page-keyboard-search-executes-command-without-editing-document"
+    ],
+    "browserRegressions": [
+      "startup, subdirectory assets and actual egui canvas",
+      "new document, real keyboard editing, preview and theme",
+      "shared filename editor and real keyboard command palette",
+      "import and exact active UTF-8/CRLF/BOM download",
+      "Save As chooses a different downloaded filename and can cancel safely",
+      "reload restores all tabs, exact active body, mode and theme",
+      "page lifecycle flush preserves a pending new tab on immediate reload",
+      "close active browser tab selects remaining document without deleting other notes",
+      "invalid extension, UTF-8 and size leave active content unchanged",
+      "real async file read cannot overwrite newer selection or a new tab",
+      "unchanged renderer helper export returns real sanitized HTML",
+      "quota failure is visible; exact current content stays downloadable and retry recovers",
+      "cross-tab conflict preserves persisted bytes and in-memory edits",
+      "malformed persisted bytes are recoverable and never silently overwritten",
+      "storage read denial starts usable editor with visible non-durable warning",
+      "origin writer lease blocks a competing editor and releases safely on close",
+      "missing Web Locks fails closed instead of admitting an unsafe writer"
+    ]
+  },
+  "capabilities": {
+    "navigation": { "native": "filesystem folder tabs and folder menus", "browser": "origin-local document tabs", "shared": "one tab-widget painter; labels and data reflect their actual scope" },
+    "open": { "native": "native file picker", "browser": "browser file picker; import a copy" },
+    "save": { "native": "atomic disk write", "browser": "save origin-local draft and download a copy, not overwrite imported disk file" },
+    "saveAs": { "native": "native destination picker", "browser": "download a named copy" },
+    "workingFolder": { "native": true, "browser": false },
+    "lastTabClosure": { "native": "may close the last folder and return to folder selection", "browser": "retain at least one document" },
+    "browserBounds": { "documents": 16, "documentBytes": 1048576, "sessionBytes": 4194304 },
+    "browserWriterOwnership": "one origin-exclusive Web Locks lease, acquired before App construction and retained through flush/teardown"
+  },
+  "visualPolicy": {
+    "baselineUpdates": "explicit separately reviewed native-reference update, never ordinary verification",
+    "comparison": "matched actual application content, not OS/window decorations or website framing",
+    "exceptions": ["target-specific navigation labels/icons and command availability only where capability table requires it"],
+    "forbiddenExceptions": ["whole toolbar", "whole editor or preview", "arbitrary browser padding", "missing controls", "startup or console errors"]
+  }
+}

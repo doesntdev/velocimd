@@ -9,6 +9,7 @@ pub(super) struct SplitLayout {
     pub divider: Rect,
     pub preview: Rect,
     pub changed_ratio: Option<f32>,
+    pub response_rect: Option<Rect>,
 }
 
 fn regions(bounds: Rect, ratio: f32) -> SplitLayout {
@@ -29,6 +30,7 @@ fn regions(bounds: Rect, ratio: f32) -> SplitLayout {
         ),
         preview: Rect::from_min_max(pos2(x + divider_width, bounds.top()), bounds.max),
         changed_ratio: None,
+        response_rect: None,
     }
 }
 
@@ -85,6 +87,7 @@ pub(super) fn show(ui: &mut egui::Ui, ratio: f32, tokens: DesignTokens) -> Split
             "Resize editor and preview",
         )
     });
+    layout.response_rect = Some(response.rect);
     layout
 }
 

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "referenceRelease": "v0.1.6",
+  "referenceCommit": "54df0b5b8da5e04775378fe581f7386cac096241",
+  "nativeBinarySha256": "c7500f48dcdb47fa264b0390b4e326199fca8e16567f64b640e14c9603cc834b",
+  "fixtureSha256": "eae07edf07dd3b5bfd0bf00693da819356fca50af64d53547bc95332976eb1fe",
+  "viewport": {
+    "width": 1280,
+    "height": 800,
+    "scale": 1
+  },
+  "files": {
+    "dark-edit.png": "a7017e694a5bc39bbc0afd89327eec3697814db3c52ce93848148bddaab63a91",
+    "dark-split.png": "b3613ab1ab6a84401cbfd244fee5fa70ec7a486629b4351d46d793fc739b5137",
+    "dark-preview.png": "869c37693ebc8d74774e57cdad524048d27e805bc29a4cd144866a4d778d38ec",
+    "light-edit.png": "a18550f8e70b1a6a50d19e707c03243f695f7a5dd969062c53bd08f2d82a5a10",
+    "light-split.png": "0a75a620e65d6546844682baf49ea4a99992ede5cceb84e54aa04b034708d9c5",
+    "light-preview.png": "eaaab6a876f72f5e0e69d420ef2218bb8f99a0d26afb77e7c712c66a5a55fc40"
+  },
+  "policy": "Captured from the previously verified published native package, not accepted from the browser or changed UI; update explicitly in a reviewed native-reference change."
+}

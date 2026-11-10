@@ -576,7 +576,7 @@ impl PreviewRenderer {
         markdown: &str,
         tokens: DesignTokens,
         sync_target: Option<PreviewSyncTarget>,
-    ) {
+    ) -> egui::Response {
         if self.identity != Some((document_id, revision)) {
             self.update(
                 markdown,
@@ -585,7 +585,7 @@ impl PreviewRenderer {
             self.identity = Some((document_id, revision));
             self.standalone = None;
         }
-        self.show_cached(ui, tokens, sync_target);
+        self.show_cached(ui, tokens, sync_target)
     }
 
     fn update(&mut self, markdown: &str, reuse: bool) {
@@ -686,7 +686,7 @@ impl PreviewRenderer {
         ui: &mut egui::Ui,
         tokens: DesignTokens,
         sync_target: Option<PreviewSyncTarget>,
-    ) {
+    ) -> egui::Response {
         ui.style_mut().url_in_tooltip = true;
         let min_size =
             ui.available_size() - egui::Vec2::splat(f32::from(PREVIEW_FRAME_MARGIN) * 2.0);
@@ -895,7 +895,8 @@ impl PreviewRenderer {
                 // Only actual measurements change the estimate. They may change
                 // the scroll clamp, so request a convergence frame, never a timer.
                 self.trim_retained();
-            });
+            })
+            .response
     }
 
     fn measure_block(

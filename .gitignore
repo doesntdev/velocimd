@@ -1,5 +1,9 @@
 /target
 /docs/*
 !/docs/stabilization.md
+!/docs/browser-parity.md
 /dist
+/node_modules
+__pycache__/
+*.pyc
 .codex

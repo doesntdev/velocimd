@@ -1,0 +1,17 @@
+{
+  "name": "@velocimd/parity-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify:parity": "python3 scripts/verify-parity.py",
+    "test:parity-tools": "node --test scripts/parity/*.test.mjs",
+    "test:browser": "node scripts/test-web.mjs"
+  },
+  "devDependencies": {
+    "pixelmatch": "7.1.0",
+    "playwright": "1.65.0",
+    "pngjs": "7.0.0"
+  },
+  "packageManager": "pnpm@10.34.7",
+  "engines": { "node": "24.15.0" }
+}

@@ -209,6 +209,7 @@ impl PersistedDocument {
 
 impl AppState {
     pub fn new() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         // Try to load the state from file
         if let Ok(state) = Self::load() {
             return state;
@@ -218,10 +219,14 @@ impl AppState {
     }
 
     pub fn fresh() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let theme = Self::theme_path()
             .ok()
             .and_then(|path| ThemeConfig::load_from(path).ok())
             .unwrap_or_else(ThemeConfig::default_dark);
+
+        #[cfg(target_arch = "wasm32")]
+        let theme = ThemeConfig::default_dark();
 
         Self {
             documents: vec![Document::scratch(

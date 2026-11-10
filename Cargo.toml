@@ -31,13 +31,15 @@ tempfile = "3.27"
 native-dialog = "0.9.6"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Storage", "CustomEvent", "CustomEventInit", "Document", "HtmlElement"] }
+web-time = "1.1"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 
 [dev-dependencies]
 insta = "1.43"
+syn = { version = "=2.0.117", features = ["full", "visit"] }
 
 [build-dependencies]
 winresource = "0.1.31"

@@ -1,28 +1,36 @@
 use crate::{
     app_state::AppState,
     commands::Command,
-    icons::{Icon, compact_icon_button, icon_button, paint_icon, paint_logo},
+    icons::{Icon, paint_icon, paint_logo},
     modes::EditorMode,
     theme::{DesignTokens, ThemeConfig},
 };
+#[cfg(target_arch = "wasm32")]
+mod browser;
+mod chrome;
+#[cfg(test)]
+mod chrome_tests;
 #[cfg(test)]
 mod desktop_controls_tests;
 mod editor_layout;
+#[cfg(not(target_arch = "wasm32"))]
 mod persistence;
+mod probe;
 mod splitter;
 use editor_layout::EditorLayoutCache;
 
 use eframe::{App, CreationContext, Frame, egui};
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use crate::icons::{compact_icon_button, icon_button};
 #[cfg(not(target_arch = "wasm32"))]
 use native_dialog::FileDialogBuilder;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::{collections::HashMap, fs, path::Path};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 const APP_PADDING: i8 = 10;
 const PANE_SCROLL_MARGIN: i8 = 8;
@@ -38,6 +46,7 @@ const COMMAND_BAR_CONTROL_HEIGHT: f32 = 28.0;
 const COMMAND_BAR_HEIGHT: f32 = COMMAND_BAR_CONTROL_HEIGHT + COMMAND_BAR_VERTICAL_PADDING * 2.0;
 const AUTOSAVE_DEBOUNCE: Duration = Duration::from_millis(450);
 const STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(900);
+#[cfg(not(target_arch = "wasm32"))]
 const FOLDER_ENTRY_CACHE_TTL: Duration = Duration::from_secs(2);
 #[cfg(test)]
 thread_local! { static MENU_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
@@ -68,6 +77,7 @@ struct EditorOutcome {
     galley_top: f32,
     text_clip_top: f32,
     galley: Option<std::sync::Arc<egui::Galley>>,
+    visible_response_rect: Option<egui::Rect>,
 }
 
 #[derive(Default)]
@@ -123,15 +133,18 @@ impl LineMetadata {
 }
 
 #[derive(Default)]
+#[cfg(not(target_arch = "wasm32"))]
 struct FolderEntryCache {
     entries: HashMap<PathBuf, CachedFolderEntries>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct CachedFolderEntries {
     loaded_at: Instant,
     entries: Arc<[FolderEntry]>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FolderEntryCache {
     fn entries(&mut self, folder: &Path) -> Arc<[FolderEntry]> {
         let now = Instant::now();
@@ -162,9 +175,14 @@ pub struct VelocimdApp {
     preview_renderer: PreviewRenderer,
     line_metadata: LineMetadataCache,
     editor_layout: EditorLayoutCache,
+    #[cfg(not(target_arch = "wasm32"))]
     persistence: persistence::UiPersistence,
+    #[cfg(target_arch = "wasm32")]
+    browser: crate::browser::BrowserState,
+    #[cfg(not(target_arch = "wasm32"))]
     folder_entry_cache: FolderEntryCache,
     theme_applied: bool,
+    #[cfg(not(target_arch = "wasm32"))]
     working_folder_prompted: bool,
     synced_scroll_y: f32,
     editor_sync_geometry: Option<(u64, egui::Rect, Arc<egui::Galley>)>,
@@ -180,6 +198,7 @@ pub struct VelocimdApp {
     file_dialog_builder: FileDialogBuilder,
     palette_selection: usize,
     palette_focus_requested: bool,
+    ui_probe: probe::UiProbe,
 }
 
 impl VelocimdApp {
@@ -189,12 +208,31 @@ impl VelocimdApp {
 
     pub fn new_with_files(cc: &CreationContext<'_>, files: Vec<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        #[cfg(not(target_arch = "wasm32"))]
         let mut state = AppState::new();
+        #[cfg(target_arch = "wasm32")]
+        let (state, browser) = crate::browser::BrowserState::load();
+        #[cfg(not(target_arch = "wasm32"))]
         for path in files {
             let _ = state.open_file(path);
         }
+        #[cfg(target_arch = "wasm32")]
+        cc.egui_ctx.set_theme(if state.theme.is_light() {
+            egui::Theme::Light
+        } else {
+            egui::Theme::Dark
+        });
         state.theme.apply_to(&cc.egui_ctx);
-        Self::from_state(state)
+        let app = Self::from_state(state);
+        #[cfg(target_arch = "wasm32")]
+        let app = {
+            let _ = files;
+            let mut app = app;
+            app.browser = browser;
+            app.browser.context = Some(cc.egui_ctx.clone());
+            app
+        };
+        app
     }
 
     fn from_state(state: AppState) -> Self {
@@ -203,9 +241,14 @@ impl VelocimdApp {
             preview_renderer: PreviewRenderer::default(),
             line_metadata: LineMetadataCache::default(),
             editor_layout: EditorLayoutCache::default(),
+            #[cfg(not(target_arch = "wasm32"))]
             persistence: persistence::UiPersistence::default(),
+            #[cfg(target_arch = "wasm32")]
+            browser: crate::browser::BrowserState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
             folder_entry_cache: FolderEntryCache::default(),
             theme_applied: true,
+            #[cfg(not(target_arch = "wasm32"))]
             working_folder_prompted: false,
             synced_scroll_y: 0.0,
             editor_sync_geometry: None,
@@ -221,9 +264,11 @@ impl VelocimdApp {
             file_dialog_builder: FileDialogBuilder::default(),
             palette_selection: 0,
             palette_focus_requested: false,
+            ui_probe: probe::UiProbe::default(),
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn prompt_for_working_folder_once(&mut self, ctx: &egui::Context) {
         if self.state.working_folder.is_none() && !self.working_folder_prompted {
             self.working_folder_prompted = true;
@@ -231,10 +276,29 @@ impl VelocimdApp {
         }
     }
 
+    fn command_label(&self, command: Command) -> &'static str {
+        #[cfg(target_arch = "wasm32")]
+        match command {
+            Command::NewTab => return "New browser document",
+            Command::SelectWorkingFolder => {
+                return "Folder navigation requires desktop (no browser filesystem mount)";
+            }
+            Command::OpenFile => return "Import Markdown copy (1 MiB per file; 16 document tabs)",
+            Command::SaveFile => {
+                return "Save local draft and download a copy (never overwrites disk)";
+            }
+            Command::SaveFileAs => return "Save local draft and download as…",
+            Command::CloseFolderTab => return "Close browser document (download a backup first)",
+            _ => {}
+        }
+        command.label()
+    }
+
     fn tokens(&self) -> DesignTokens {
         DesignTokens::from_theme(&self.state.theme)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn working_folder_gate(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> bool {
         if self.state.active_folder_path().is_some() {
             return true;
@@ -349,6 +413,11 @@ impl VelocimdApp {
                 self.palette_selection = 0;
             }
             let commands = Command::matching(&self.state.command_query);
+            #[cfg(target_arch = "wasm32")]
+            let commands: Vec<_> = commands
+                .into_iter()
+                .filter(|c| *c != Command::SelectWorkingFolder)
+                .collect();
             self.palette_selection = self.palette_selection.min(commands.len().saturating_sub(1));
             if up {
                 self.palette_selection = self.palette_selection.saturating_sub(1);
@@ -366,7 +435,7 @@ impl VelocimdApp {
                     for (index, command) in commands.iter().enumerate() {
                         let response = ui.selectable_label(
                             index == self.palette_selection,
-                            format!("{}    {}", command.label(), command.shortcut()),
+                            format!("{}    {}", self.command_label(*command), command.shortcut()),
                         );
                         if response.clicked() {
                             selected_command = Some(*command);
@@ -392,7 +461,7 @@ impl VelocimdApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let tokens = self.tokens();
-        let (rect, _) = ui.allocate_exact_size(
+        let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), HEADER_BAR_HEIGHT),
             egui::Sense::hover(),
         );
@@ -401,6 +470,7 @@ impl VelocimdApp {
             ui.painter().rect_filled(rect, 0, tokens.chrome_bg);
         }
 
+        self.ui_probe.region("top_bar", response.rect);
         let content_rect = rect.shrink2(egui::vec2(
             HEADER_HORIZONTAL_PADDING,
             HEADER_VERTICAL_PADDING,
@@ -457,104 +527,9 @@ impl VelocimdApp {
         );
     }
 
-    fn folder_tabs(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let tokens = self.tokens();
-        let tabs: Vec<(usize, PathBuf, bool)> = self
-            .state
-            .folder_tabs
-            .iter()
-            .enumerate()
-            .map(|(index, folder_tab)| {
-                (
-                    index,
-                    folder_tab.path.clone(),
-                    index == self.state.active_folder_tab,
-                )
-            })
-            .collect();
-        let mut close_requested = None;
-        let mut selected_file = None;
-        let mut selected_folder = None;
-
-        ui.horizontal_centered(|ui| {
-            for (index, path, is_active) in tabs {
-                let title = folder_title(&path);
-                let fill = if is_active {
-                    tokens.panel_bg_active
-                } else {
-                    tokens.panel_bg
-                };
-                let stroke = if is_active {
-                    tokens.border_active
-                } else {
-                    tokens.border
-                };
-                let button = egui::Button::new(egui::RichText::new(title).color(if is_active {
-                    tokens.text
-                } else {
-                    tokens.text_muted
-                }))
-                .fill(fill)
-                .stroke(egui::Stroke::new(1.0_f32, stroke))
-                .corner_radius(6)
-                .min_size(egui::vec2(132.0, HEADER_CONTROL_HEIGHT));
-
-                let (response, _) =
-                    egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
-                        folder_tab_menu(
-                            ui,
-                            &mut self.folder_entry_cache,
-                            &path,
-                            &mut selected_file,
-                            &mut selected_folder,
-                        );
-                    });
-                if response.clicked() {
-                    self.state.active_folder_tab = index;
-                    self.persist_state();
-                }
-                response.on_hover_text(path.display().to_string());
-
-                if self.state.folder_tabs.len() > 1 {
-                    let close = compact_icon_button(
-                        ui,
-                        Icon::X,
-                        format!("Close folder tab {}", path.display()),
-                    );
-                    if close.clicked() {
-                        close_requested = Some(index);
-                    }
-                }
-            }
-
-            let add = icon_button(ui, Icon::Plus, false, "New folder tab".to_string());
-            if add.clicked() {
-                self.select_folder_tab(ctx);
-            }
-        });
-
-        if let Some(path) = selected_folder {
-            if self.state.add_folder_tab(path.clone()) {
-                self.status_message = Some(format!("Folder tab {}", short_path(&path)));
-                self.persist_state();
-            } else {
-                self.status_message = Some("Could not open folder tab".to_string());
-            }
-        }
-
-        if let Some(path) = selected_file {
-            self.open_markdown_file(ctx, path);
-        }
-
-        if let Some(index) = close_requested {
-            self.state.close_folder_tab_at(index);
-            self.persist_state();
-        }
-    }
-
     fn command_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let tokens = self.tokens();
-        let (rect, _) = ui.allocate_exact_size(
+        let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), COMMAND_BAR_HEIGHT),
             egui::Sense::hover(),
         );
@@ -563,6 +538,7 @@ impl VelocimdApp {
             ui.painter().rect_filled(rect, 0, tokens.chrome_bg);
         }
 
+        self.ui_probe.region("command_bar", response.rect);
         let content_rect = rect.shrink2(egui::vec2(
             COMMAND_BAR_HORIZONTAL_PADDING,
             COMMAND_BAR_VERTICAL_PADDING,
@@ -588,16 +564,25 @@ impl VelocimdApp {
                     } else {
                         *command
                     };
-                    let response = icon_button(
-                        ui,
-                        Icon::for_command(*command),
-                        active,
-                        format!(
-                            "{} ({})",
-                            tooltip_command.label(),
-                            tooltip_command.shortcut()
-                        ),
+                    let tooltip = format!(
+                        "{} ({})",
+                        self.command_label(tooltip_command),
+                        tooltip_command.shortcut()
                     );
+                    // Native retains its original widget allocation/ID path.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let response = icon_button(ui, Icon::for_command(*command), active, tooltip);
+                    #[cfg(target_arch = "wasm32")]
+                    let response = ui
+                        .add_enabled_ui(
+                            *command != Command::SelectWorkingFolder
+                                && (*command != Command::CloseFolderTab
+                                    || self.state.documents.len() > 1),
+                            |ui| icon_button(ui, Icon::for_command(*command), active, tooltip),
+                        )
+                        .inner;
+                    self.ui_probe
+                        .control(probe::toolbar_id(*command), &response, active);
                     if response.clicked() {
                         self.run_command(ctx, *command);
                     }
@@ -638,11 +623,13 @@ impl VelocimdApp {
             )
             .on_hover_text("Rename Markdown file");
 
+        self.ui_probe.control("filename", &response, false);
         if response.lost_focus() {
             self.commit_file_name_edit(document_index, document_id);
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn commit_file_name_edit(&mut self, document_index: usize, document_id: u64) {
         if self.file_name_editor_document_id != Some(document_id) {
             return;
@@ -736,7 +723,7 @@ impl VelocimdApp {
         let digit_count = line_count.to_string().len().max(2);
         let available_width = ui.available_width();
         let outer_size = egui::vec2(available_width, text_height);
-        let (outer_rect, _) = ui.allocate_exact_size(outer_size, egui::Sense::hover());
+        let (outer_rect, outer_response) = ui.allocate_exact_size(outer_size, egui::Sense::hover());
         let painter = ui.painter_at(outer_rect);
         painter.rect_filled(outer_rect, 6, tokens.panel_bg);
         painter.rect_stroke(
@@ -860,6 +847,7 @@ impl VelocimdApp {
             galley_top: text_output.galley_pos.y,
             text_clip_top: text_output.text_clip_rect.top(),
             galley: Some(text_output.galley.clone()),
+            visible_response_rect: Some(outer_response.rect.intersect(ui.clip_rect())),
         };
 
         if outcome.changed {
@@ -912,6 +900,10 @@ impl VelocimdApp {
             );
         }
 
+        if let Some(rect) = output.inner.visible_response_rect {
+            self.ui_probe
+                .region("editor", rect.intersect(output.inner_rect));
+        }
         if output.inner.changed {
             self.schedule_autosave(ctx);
         }
@@ -940,7 +932,7 @@ impl VelocimdApp {
             .max_width(viewport_size.x)
             .max_height(viewport_size.y)
             .auto_shrink([false, false]);
-        scroll_area
+        let output = scroll_area
             .content_margin(egui::Margin::same(PANE_SCROLL_MARGIN))
             .show(ui, |ui| {
                 ui.set_min_height(min_height);
@@ -951,8 +943,10 @@ impl VelocimdApp {
                     &document.content,
                     tokens,
                     sync_target,
-                );
+                )
             });
+        self.ui_probe
+            .region("preview", output.inner.rect.intersect(output.inner_rect));
     }
 
     fn sync_preview_from_editor(
@@ -1001,6 +995,7 @@ impl VelocimdApp {
     }
 
     fn workspace(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        #[cfg(not(target_arch = "wasm32"))]
         self.state
             .ensure_document_loaded(self.state.active_document);
         self.command_bar(ui, ctx);
@@ -1017,6 +1012,9 @@ impl VelocimdApp {
                 }
                 EditorMode::Split => {
                     let layout = splitter::show(ui, self.state.split_ratio, self.tokens());
+                    if let Some(rect) = layout.response_rect {
+                        self.ui_probe.region("divider", rect);
+                    }
                     if let Some(ratio) = layout.changed_ratio {
                         self.state.split_ratio = ratio;
                         self.persist_state();
@@ -1059,6 +1057,7 @@ impl VelocimdApp {
         );
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn run_command(&mut self, ctx: &egui::Context, command: Command) {
         self.ensure_persistence_worker(ctx);
         match command {
@@ -1087,6 +1086,7 @@ impl VelocimdApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn create_markdown_file(&mut self, ctx: &egui::Context) {
         if self.state.active_folder_path().is_none() {
             self.status_message = Some("Choose a folder first".to_string());
@@ -1201,6 +1201,7 @@ impl VelocimdApp {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_markdown_file(&mut self, ctx: &egui::Context, path: PathBuf) {
         if self.state.open_file(path.clone()) {
             self.reset_scroll_sync();
@@ -1276,7 +1277,14 @@ impl VelocimdApp {
 
     fn switch_theme(&mut self, ctx: &egui::Context, theme: ThemeConfig) {
         self.state.theme = theme;
+        #[cfg(target_arch = "wasm32")]
+        ctx.set_theme(if self.state.theme.is_light() {
+            egui::Theme::Light
+        } else {
+            egui::Theme::Dark
+        });
         self.state.theme.apply_to(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
         let _ = self.state.save_theme();
         self.persist_state();
     }
@@ -1288,6 +1296,7 @@ impl VelocimdApp {
         self.preview_sync_anchor = PreviewSyncAnchor::Top;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn invalidate_folder_for_path(&mut self, path: &Path) {
         if let Some(folder) = path.parent() {
             self.folder_entry_cache.invalidate(folder);
@@ -1295,6 +1304,8 @@ impl VelocimdApp {
     }
 
     fn schedule_autosave(&mut self, ctx: &egui::Context) {
+        #[cfg(target_arch = "wasm32")]
+        self.persist_state();
         let due = Instant::now() + AUTOSAVE_DEBOUNCE;
         self.autosave_due = Some(due);
         ctx.request_repaint_after(AUTOSAVE_DEBOUNCE);
@@ -1302,8 +1313,14 @@ impl VelocimdApp {
 }
 
 impl App for VelocimdApp {
+    #[cfg(target_arch = "wasm32")]
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut Frame) {
         let ctx = ui.ctx().clone();
+        self.ui_probe.begin();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.file_dialog_builder = FileDialogBuilder::default().set_owner(frame);
@@ -1316,14 +1333,18 @@ impl App for VelocimdApp {
             self.theme_applied = true;
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         self.prompt_for_working_folder_once(&ctx);
         self.handle_shortcuts(&ctx);
 
+        #[cfg(target_arch = "wasm32")]
+        ui.set_style(ctx.global_style());
         let tokens = self.tokens();
         egui::Frame::central_panel(ui.style())
             .fill(tokens.app_bg)
             .inner_margin(egui::Margin::same(APP_PADDING))
             .show(ui, |ui| {
+                #[cfg(not(target_arch = "wasm32"))]
                 if !self.working_folder_gate(ui, &ctx) {
                     return;
                 }
@@ -1333,6 +1354,9 @@ impl App for VelocimdApp {
             });
         self.command_palette(&ctx);
         self.show_dialog_error(&ctx);
+        self.finish_ui_probe(&ctx);
+        #[cfg(target_arch = "wasm32")]
+        self.publish_browser_state();
     }
 }
 
@@ -1502,6 +1526,7 @@ fn with_markdown_extension(mut path: PathBuf) -> PathBuf {
     path
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn short_path(path: &Path) -> String {
     if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
         name.to_string()
@@ -1510,6 +1535,7 @@ fn short_path(path: &Path) -> String {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn folder_title(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -1518,6 +1544,7 @@ fn folder_title(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn folder_tab_menu(
     ui: &mut egui::Ui,
     folder_entry_cache: &mut FolderEntryCache,
@@ -1572,18 +1599,21 @@ fn folder_tab_menu(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(not(target_arch = "wasm32"))]
 enum FolderEntryKind {
     Folder,
     Markdown,
 }
 
 #[derive(Clone)]
+#[cfg(not(target_arch = "wasm32"))]
 struct FolderEntry {
     name: String,
     path: PathBuf,
     kind: FolderEntryKind,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn folder_entries(folder: &Path) -> Vec<FolderEntry> {
     let Ok(read_dir) = fs::read_dir(folder) else {
         return Vec::new();
@@ -1618,12 +1648,14 @@ fn folder_entries(folder: &Path) -> Vec<FolderEntry> {
     entries
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn is_markdown_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(crate::document::is_markdown_extension)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::document::strip_markdown_extension;
 
 #[cfg(test)]
@@ -2344,24 +2376,5 @@ mod preview_sync_tests {
         assert_eq!(viewport_anchor_for_y(100.0, rect), 0.0);
         assert_eq!(viewport_anchor_for_y(300.0, rect), 0.5);
         assert_eq!(viewport_anchor_for_y(500.0, rect), 1.0);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl VelocimdApp {
-    fn select_folder_tab(&mut self, _ctx: &egui::Context) {
-        // File dialogs not supported on WASM
-    }
-
-    fn select_working_folder(&mut self, _ctx: &egui::Context) {
-        // File dialogs not supported on WASM
-    }
-
-    fn open_file(&mut self, _ctx: &egui::Context) {
-        // File dialogs not supported on WASM
-    }
-
-    fn save_file_as(&mut self, _ctx: &egui::Context) {
-        // File dialogs not supported on WASM
     }
 }
