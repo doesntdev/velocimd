@@ -14,6 +14,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod incremental;
+#[cfg(test)]
+mod incremental_tests;
+
 const MAX_RETAINED_GALLEYS: usize = 64;
 const PLAIN_FRAGMENT_BYTES: usize = 8 * 1024;
 const REVISION_FRAGMENT_BATCH: usize = 4;
@@ -27,6 +31,8 @@ pub(super) struct PreviewSegment {
     pub(super) start_line: usize,
     pub(super) line_count: usize,
     pub(super) kind: PreviewSegmentKind,
+    source_range: Range<usize>,
+    editable_plain: bool,
     // None is the conservative rich/interactive fallback, not a cached AST.
     plain: Option<String>,
     heading: bool,
@@ -220,6 +226,10 @@ pub(super) fn split_preview_segments(markdown: &str) -> Vec<PreviewSegment> {
             start_line,
             line_count: last_line.saturating_sub(start_line) + 1,
             kind,
+            source_range: first.range.start..end,
+            editable_plain: index == end_index
+                && first.plain.is_some()
+                && incremental::isolated_plain(markdown, first.range.start..end),
             plain: if index == end_index {
                 first.plain.clone()
             } else {
@@ -239,6 +249,8 @@ pub(super) fn split_preview_segments(markdown: &str) -> Vec<PreviewSegment> {
             start_line: 0,
             line_count: line_starts.len(),
             kind: PreviewSegmentKind::Markdown(String::new()),
+            source_range: 0..markdown.len(),
+            editable_plain: false,
             plain: Some(String::new()),
             heading: false,
             embedded_mermaids: Vec::new(),
@@ -532,6 +544,12 @@ pub struct PreviewRenderer {
     #[cfg(test)]
     parses: usize,
     #[cfg(test)]
+    full_segment_bytes: usize,
+    #[cfg(test)]
+    region_parses: usize,
+    #[cfg(test)]
+    region_bytes: usize,
+    #[cfg(test)]
     layout_bytes: usize,
     #[cfg(test)]
     layouts: usize,
@@ -592,6 +610,7 @@ impl PreviewRenderer {
         #[cfg(test)]
         {
             self.parses += 1;
+            self.full_segment_bytes += markdown.len();
         }
         let mut old = HashMap::<u64, VecDeque<CachedBlock>>::new();
         for block in self.blocks.drain(..) {
@@ -639,8 +658,7 @@ impl PreviewRenderer {
                 block.measured = false;
                 block
             } else if let Some(mut block) = matched {
-                block.segment.start_line = segment.start_line;
-                block.segment.line_count = segment.line_count;
+                block.segment = segment;
                 block
             } else {
                 self.next_id = self.next_id.wrapping_add(1);

@@ -12,7 +12,9 @@ mod chrome;
 mod chrome_tests;
 #[cfg(test)]
 mod desktop_controls_tests;
+mod edit;
 mod editor_layout;
+use edit::{LineMetadataCache, RecordingBuffer};
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod probe;
@@ -78,58 +80,6 @@ struct EditorOutcome {
     text_clip_top: f32,
     galley: Option<std::sync::Arc<egui::Galley>>,
     visible_response_rect: Option<egui::Rect>,
-}
-
-#[derive(Default)]
-struct LineMetadataCache {
-    document_id: Option<u64>,
-    revision: u64,
-    metadata: LineMetadata,
-}
-
-#[derive(Clone)]
-struct LineMetadata {
-    line_starts: Vec<usize>,
-}
-
-impl Default for LineMetadata {
-    fn default() -> Self {
-        Self {
-            line_starts: vec![0],
-        }
-    }
-}
-
-impl LineMetadataCache {
-    fn line_count(&mut self, document_id: u64, revision: u64, content: &str) -> usize {
-        self.metadata(document_id, revision, content)
-            .line_starts
-            .len()
-            .max(1)
-    }
-
-    fn metadata(&mut self, document_id: u64, revision: u64, content: &str) -> &LineMetadata {
-        if self.document_id != Some(document_id) || self.revision != revision {
-            self.document_id = Some(document_id);
-            self.revision = revision;
-            self.metadata = LineMetadata::from_content(content);
-        }
-
-        &self.metadata
-    }
-}
-
-impl LineMetadata {
-    fn from_content(content: &str) -> Self {
-        let mut line_starts = vec![0];
-        for (index, character) in content.chars().enumerate() {
-            if character == '\n' {
-                line_starts.push(index + 1);
-            }
-        }
-
-        Self { line_starts }
-    }
 }
 
 #[derive(Default)]
@@ -754,13 +704,15 @@ impl VelocimdApp {
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width: f32| {
             layout.layout(ui, identity, text.as_str(), &editor_font, width)
         };
+        let mut buffer =
+            RecordingBuffer::new(&mut document.content, &mut self.line_metadata.metadata);
         let text_output = ui
             .scope_builder(
                 egui::UiBuilder::new()
                     .max_rect(text_rect)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
                 |ui| {
-                    egui::TextEdit::multiline(&mut document.content)
+                    egui::TextEdit::multiline(&mut buffer)
                         .font(egui::TextStyle::Monospace)
                         .desired_width(f32::INFINITY)
                         .desired_rows(visible_rows)
@@ -777,6 +729,22 @@ impl VelocimdApp {
                 },
             )
             .inner;
+        let edits = buffer.finish();
+        let changed = text_output.response.changed() || !edits.is_empty();
+        // TextEdit can perform several deletes/inserts (or an undo replacement)
+        // before returning. Publish the index and preview as one revision only
+        // after every mutation has been captured in its original order.
+        if changed {
+            let before = document.revision;
+            document.mark_changed();
+            self.line_metadata
+                .finish_edit(document.id, before, document.revision);
+            self.preview_renderer
+                .apply_edits(document.id, before, document.revision, &edits);
+        }
+        let line_count =
+            self.line_metadata
+                .line_count(document.id, document.revision, &document.content);
 
         let gutter_inner = egui::Rect::from_min_max(
             egui::pos2(gutter_rect.left() + 8.0, gutter_rect.top()),
@@ -840,7 +808,7 @@ impl VelocimdApp {
         let clicked_y = clicked_position.map(|position| position.y);
 
         let outcome = EditorOutcome {
-            changed: text_output.response.changed(),
+            changed,
             clicked_line: clicked_line.map(|line| line.min(line_count.saturating_sub(1))),
             clicked_y,
             line_count,
@@ -851,7 +819,6 @@ impl VelocimdApp {
         };
 
         if outcome.changed {
-            document.mark_changed();
             // Newlines/wrapping can change height during this frame's input handling.
             ui.ctx()
                 .request_discard("editor content changed; recompute bounds and gutter");

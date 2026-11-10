@@ -124,21 +124,22 @@ def main():
                             assert image.size == (1100 * scale, 800 * scale)
                         screenshots.append(str(path))
 
-                    for index, mode in [(6, "Edit"), (7, "Preview"), (8, "Split"), (9, "Edit"), (8, "Split")]:
+                    # Current shared chrome is Edit, Split, Preview, Cycle,
+                    # then one theme toggle; these are real pointer clicks.
+                    for index, mode in [(6, "Edit"), (8, "Preview"), (7, "Split"), (9, "Edit"), (7, "Split")]:
                         click(index)
                         SMOKE.wait_for(lambda: state_matches("mode", mode), f"toolbar click selects {mode} at {scale}x")
-                    click(11)
-                    SMOKE.wait_for(lambda: state_matches("theme", "Velocidark"), "dark theme click")
+                    SMOKE.wait_for(lambda: state_matches("theme", "Velocidark"), "initial dark theme")
                     capture("dark")
                     click(10)
                     SMOKE.wait_for(lambda: state_matches("theme", "Velocilight"), "light theme click")
                     capture("light")
                     click(3)
                     assert note.read_text() == content, "Save changed untouched note content"
-                    click(11)
+                    click(10)
                     SMOKE.wait_for(lambda: state_matches("theme", "Velocidark"), "dark theme restored")
                     if scale == 1:
-                        SMOKE.run("xdotool", "mousemove", "--window", window, "285", "76")
+                        SMOKE.run("xdotool", "mousemove", "--window", window, "321", "76")
                         time.sleep(0.8)
                         capture("hover-preview")
                     SMOKE.close_window(window)

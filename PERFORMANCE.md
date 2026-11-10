@@ -1,5 +1,43 @@
 # Velocimd performance implementation and verification
 
+## Local issue #9 increment — incremental edit processing
+
+This source-only increment is separate from the published desktop v0.1.6 and the
+website's existing browser artifact. It is based on the preserved browser/desktop
+parity source checkpoint, not a claim that the browser adapters were already on
+public `main`. No release, installation or website deployment is included.
+
+The actual `TextEdit` buffer records insert/delete operations in order. The line
+index applies those operations using scalar and byte coordinates, avoiding a new
+whole-document character scan after ordinary edits. The preview can reparse an
+isolated, parser-confirmed plain paragraph while retaining unaffected blocks.
+Structural/context-sensitive edits, replacements, missed revisions and unsupported
+paragraph shapes deliberately use the complete parser. Offset/height rebasing can
+still scale with line/block counts; this is not a constant-time editor claim.
+
+A focused regression on a 330,003-byte document observed one 34-byte region parse
+for its localized edit, with the whole-document parse count remaining at its
+initial cold parse. This is measured parser/index work, **not** an end-to-end
+keystroke-latency or frame-rate result. The real `TextEdit` regression covers
+ordered edits and undo/redo; differential tests compare the full parser/index
+through Unicode, CRLF and contextual Markdown cases.
+
+Controller execution passed **161 Rust tests**, **21 parity-tool Node tests**,
+formatting, strict all-target Clippy, and the wasm32 library compile check. The
+isolated Linux/X11/llvmpipe native scenario passed startup, real editing/mode/theme
+controls at 1x/2x, 55-note/1 MiB-note scrolling and Split synchronization, exact
+large-note autosaves, inactive-note activation, narrow/light/dark layouts, and
+close/reopen with all 53 untouched note bodies preserved. The controller inspected
+representative narrow-light and normal-dark captures; no blank panes, corruption
+or visible discard warning was present. Native/Xvfb cleanup was verified.
+
+The legacy toolbar harness was corrected to the existing Edit/Split/Preview order
+and single theme toggle; no toolbar product behavior changed. Independent SPEC
+and QUALITY approval are required before controller acceptance. This increment
+does not certify a newly delivered browser runtime, Windows/macOS GUI behavior,
+or the remaining four performance issues. Keep compact current receipts and one
+useful build cache; generated notes and superseded screenshots are disposable.
+
 ## v0.1.6 integration
 
 The performance implementation and both subsequent input fixes are included in the
