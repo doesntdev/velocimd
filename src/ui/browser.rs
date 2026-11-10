@@ -53,6 +53,10 @@ impl VelocimdApp {
             "replace-recovery" => {
                 self.browser.replace_recovered(&self.state)?;
             }
+            "verify" => {
+                self.browser.changed();
+                self.browser.save(&self.state)?;
+            }
             "flush" => self.flush_browser_drafts()?,
             _ => return Err("Unknown browser action".into()),
         }
@@ -129,6 +133,7 @@ impl VelocimdApp {
             "status": self.browser.message,
             "recovery": self.browser.recovery.is_some(),
             "palette_open": self.state.command_palette_open,
+            "persistence": self.browser.metrics(),
         })
         .to_string()
     }
@@ -262,6 +267,9 @@ impl VelocimdApp {
         if self.browser.context.is_none() {
             self.browser.context = Some(ctx.clone());
         }
+        if self.browser.poll_completion() {
+            let _ = self.flush_browser_drafts();
+        }
         let now = Instant::now();
         let due = match (self.autosave_due, self.state_save_due) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -279,8 +287,7 @@ impl VelocimdApp {
     }
 
     pub(super) fn persist_state(&mut self) {
-        self.browser.pending = true;
-        self.browser.message = "Unsaved browser changes · download for a backup".into();
+        self.browser.changed();
         self.state_save_due = Some(Instant::now() + STATE_SAVE_DEBOUNCE);
         if let Some(ctx) = &self.browser.context {
             ctx.request_repaint_after(STATE_SAVE_DEBOUNCE);
@@ -288,6 +295,6 @@ impl VelocimdApp {
     }
 
     pub(super) fn shutdown_persistence(&mut self) {
-        let _ = self.flush_browser_drafts();
+        self.browser.shutdown(&self.state);
     }
 }

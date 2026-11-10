@@ -161,7 +161,7 @@ impl VelocimdApp {
         #[cfg(not(target_arch = "wasm32"))]
         let mut state = AppState::new();
         #[cfg(target_arch = "wasm32")]
-        let (state, browser) = crate::browser::BrowserState::load();
+        let (state, browser) = (AppState::fresh(), crate::browser::BrowserState::default());
         #[cfg(not(target_arch = "wasm32"))]
         for path in files {
             let _ = state.open_file(path);
@@ -182,6 +182,25 @@ impl VelocimdApp {
             app.browser.context = Some(cc.egui_ctx.clone());
             app
         };
+        app
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn new_browser(
+        cc: &CreationContext<'_>,
+        state: AppState,
+        mut browser: crate::browser::BrowserState,
+    ) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+        cc.egui_ctx.set_theme(if state.theme.is_light() {
+            egui::Theme::Light
+        } else {
+            egui::Theme::Dark
+        });
+        state.theme.apply_to(&cc.egui_ctx);
+        browser.context = Some(cc.egui_ctx.clone());
+        let mut app = Self::from_state(state);
+        app.browser = browser;
         app
     }
 

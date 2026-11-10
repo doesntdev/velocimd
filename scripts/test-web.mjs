@@ -15,7 +15,7 @@ const evidence = process.env.EVIDENCE_DIR || resolve(root, 'qa');
 await mkdir(evidence, {recursive:true});
 const server = createServer(async (req,res) => {
   const pathname = new URL(req.url,'http://localhost').pathname;
-  const files = {'/demo/': ['index.html','text/html'], '/demo/index.html':['index.html','text/html'], '/demo/velocimd.js':['velocimd.js','text/javascript'], '/demo/velocimd_bg.wasm':['velocimd_bg.wasm','application/wasm']};
+  const files = {'/demo/browser-store.js':['browser-store.js','text/javascript'], '/demo/': ['index.html','text/html'], '/demo/index.html':['index.html','text/html'], '/demo/velocimd.js':['velocimd.js','text/javascript'], '/demo/velocimd_bg.wasm':['velocimd_bg.wasm','application/wasm']};
   const file = files[pathname];
   if (!file) { res.writeHead(404);res.end();return; }
   try { res.writeHead(200,{'Content-Type':file[1], 'Cache-Control':'no-store'});res.end(await readFile(resolve(root,file[0]))); }
@@ -31,6 +31,12 @@ async function ready(page) { await page.goto(url); await page.waitForFunction(()
 const state = page => page.evaluate(() => JSON.parse(window.velocimd.snapshot()));
 const active = page => page.evaluate(() => JSON.parse(window.velocimd.active_document()));
 const key = 'velocimd.browser-drafts.v1';
+async function persisted(page) {
+  return page.evaluate(async () => {
+    const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('velocimd.browser-drafts.v2',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+    try{return await new Promise((resolve,reject)=>{const tx=db.transaction(['session','documents']);let head,docs;tx.objectStore('session').get('head').onsuccess=e=>head=e.target.result;tx.objectStore('documents').getAll().onsuccess=e=>docs=e.target.result;tx.oncomplete=()=>resolve(JSON.stringify({head,docs}));tx.onabort=()=>reject(tx.error);});}finally{db.close();}
+  });
+}
 async function probe(page) {
   await page.evaluate(() => window.velocimd.set_ui_probe(true));
   await page.waitForFunction(() => JSON.parse(window.velocimd.ui_snapshot()).controls?.length>0);
@@ -48,7 +54,7 @@ async function clickTab(page,index) { await click(page,`tab:${index}`);await pag
 async function saveDraft(page) {
   if (await page.locator('#retry').isVisible()) await page.click('#retry');
   else await click(page,'toolbar:save');
-  await page.evaluate(() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+  await page.waitForFunction(()=>{const s=JSON.parse(window.velocimd.snapshot());return !s.persistence.inflight && (!s.pending || !!s.error);});
 }
 try {
   const type=browserName==='firefox'?firefox:chromium;
@@ -89,8 +95,9 @@ try {
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => JSON.parse(window.velocimd.active_document()).content.includes('Actual egui edit'));
     assert.equal((await active(page)).content,'# Browser QA\n\nActual egui edit — café 🦀\n');
-    // Prove the editor's debounce reaches real localStorage without Retry.
-    await page.waitForFunction(k => (localStorage.getItem(k) || '').includes('Actual egui edit'), key);
+    // Prove debounce reaches a completed real IndexedDB transaction without Retry.
+    await page.waitForFunction(() => !JSON.parse(window.velocimd.snapshot()).pending);
+    assert((await persisted(page)).includes('Actual egui edit'));
     assert.equal((await state(page)).pending,false);
     await click(page,'toolbar:preview');
     assert.equal((await state(page)).mode,'Preview');
@@ -143,8 +150,8 @@ try {
     await saveDraft(page);
     await page.waitForFunction(() => !JSON.parse(window.velocimd.snapshot()).pending);
     const before = await state(page);
-    const persisted = await page.evaluate(k=>localStorage.getItem(k),key);
-    assert(persisted.includes('Actual egui edit'));
+    const stored = await persisted(page);
+    assert(stored.includes('Actual egui edit'));
     await page.reload();
     await page.waitForFunction(() => document.documentElement.dataset.ready==='true');
     const after = await state(page);
@@ -157,10 +164,12 @@ try {
     assert((await active(page)).content.includes('Actual egui edit'));
     await clickTab(page,2);
   });
-  await test('page lifecycle flush preserves a pending new tab on immediate reload', async () => {
+  await test('retained-page teardown drains a pending new tab before releasing its writer lease', async () => {
     await click(page,'toolbar:new');
     const before = await state(page);
     assert(before.pending);
+    await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+    await page.waitForFunction(async()=>!(await navigator.locks.query()).held.some(l=>l.name==='velocimd.browser-drafts.v1.writer'));
     await page.reload();
     await page.waitForFunction(() => document.documentElement.dataset.ready === 'true');
     assert.deepEqual((await state(page)).documents,before.documents);
@@ -213,18 +222,18 @@ try {
   });
   await test('quota failure is visible; exact current content stays downloadable and retry recovers', async () => {
     await saveDraft(page);
-    const storedBefore = await page.evaluate(k => localStorage.getItem(k),key);
-    await page.evaluate(() => {window.savedSet=Storage.prototype.setItem; Storage.prototype.setItem=function(){throw new DOMException('fixture','QuotaExceededError');};});
+    const storedBefore = await persisted(page);
+    await page.evaluate(() => {window.savedPut=IDBObjectStore.prototype.put; IDBObjectStore.prototype.put=function(){throw new DOMException('quota fixture','QuotaExceededError');};});
     await click(page,'toolbar:new');
     const before=await active(page);
     await saveDraft(page);
     await page.waitForFunction(() => document.getElementById('error').textContent.includes('quota'));
     assert((await state(page)).pending);
-    assert.equal(await page.evaluate(k => localStorage.getItem(k),key),storedBefore);
+    assert.equal(await persisted(page),storedBefore);
     const dp=page.waitForEvent('download'); await click(page,'toolbar:save');
     assert.equal((await readFile(await (await dp).path())).toString(),before.content);
     await page.screenshot({path:resolve(evidence,'quota-error.png')});
-    await page.evaluate(() => {Storage.prototype.setItem=window.savedSet;});
+    await page.evaluate(() => {IDBObjectStore.prototype.put=window.savedPut;});
     await saveDraft(page);
     assert.equal((await state(page)).pending,false);
     assert.equal((await state(page)).error,null);
@@ -251,7 +260,7 @@ try {
     assert.equal((await readFile(await (await dp).path())).toString(),'{corrupt fixture');
     p.once('dialog', d=>d.accept());await p.click('#replace');
     await p.waitForFunction(() => JSON.parse(window.velocimd.snapshot()).pending===false);
-    assert.equal(await p.evaluate(k=>localStorage.getItem(k+'.recovery'),key),'{corrupt fixture');
+    assert(await p.evaluate(async()=>{const db=await new Promise(r=>{const q=indexedDB.open('velocimd.browser-drafts.v2');q.onsuccess=()=>r(q.result);});try{return await new Promise(r=>{const q=db.transaction('recovery').objectStore('recovery').getAll();q.onsuccess=()=>r(q.result.some(v=>typeof v==='string' && (v==='{corrupt fixture' || JSON.parse(v).legacy==='{corrupt fixture')));});}finally{db.close();}}));
     await ctx.close();
   });
   await test('storage read denial starts usable editor with visible non-durable warning', async () => {
@@ -283,6 +292,7 @@ try {
         h.complete_import(h.begin_import(),'lease-A.md',new TextEncoder().encode('Writer A retained\n'));
         h.action('retry',0);
       });
+      await first.waitForFunction(()=>!JSON.parse(window.velocimd.snapshot()).pending);
       const popup=first.waitForEvent('popup');
       await first.evaluate(u=>{window.peer=window.open(u);},url);
       const second=await popup;

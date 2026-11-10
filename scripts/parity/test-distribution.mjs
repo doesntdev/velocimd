@@ -13,7 +13,7 @@ const scratch=await mkdtemp(join(process.env.TMPDIR,'parity-distribution-'))
 const results=[]
 const directoryHash=async(directory,pin)=>{
   const manifest=await readFile(join(directory,'build.json'))
-  const names=['index.html','velocimd.js','velocimd_bg.wasm','source.zip','build.json']
+  const names=['index.html','velocimd.js','velocimd_bg.wasm','browser-store.js','source.zip','build.json']
   return {manifest:sha(manifest),pin:sha(await readFile(pin)),files:Object.fromEntries(await Promise.all(names.map(async name=>[name,sha(await readFile(join(directory,name)))])))}
 }
 try{

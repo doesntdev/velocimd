@@ -1,6 +1,8 @@
 pub mod app_state;
 #[cfg(any(test, target_arch = "wasm32"))]
 mod browser;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod browser_persistence;
 pub mod commands;
 pub mod document;
 mod file_io;
@@ -18,6 +20,16 @@ use eframe::WebRunner;
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use web_sys::HtmlCanvasElement;
+
+/// Validate the legacy protocol with the SAME Rust decoder before the host may
+/// commit a migration (including duplicate fields and Rust numeric/Unicode rules).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn validate_browser_drafts(raw: &str) -> Result<(), JsValue> {
+    browser::decode(raw)
+        .map(|_| ())
+        .map_err(|e| JsValue::from_str(&e))
+}
 
 /// HTML generation helper; the editor itself continues to use its egui preview.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
@@ -46,7 +58,8 @@ extern "C" {
 impl Drop for WebHandle {
     fn drop(&mut self) {
         if std::rc::Rc::strong_count(&self.lease) == 1 {
-            // Destroy/flush the real App before releasing its origin-wide writer lease.
+            // Destroy the App and synchronously admit its final intent. The host
+            // drains admitted async writes before releasing the shared lease.
             self.runner.destroy();
             if let Some(token) = self.lease.borrow_mut().take() {
                 release_browser_lease(token);
@@ -159,13 +172,18 @@ impl WebHandle {
         // Web Locks is acquired before App construction and held through teardown,
         // covering autosave, retry, recovery replacement and lifecycle flush together.
         let token = acquire_browser_lease().await?;
-        *self.lease.borrow_mut() = Some(token);
+        *self.lease.borrow_mut() = Some(token.clone());
+        let (state, browser) = crate::browser::BrowserState::open(token).await;
         let result = self
             .runner
             .start(
                 canvas,
                 eframe::WebOptions::default(),
-                Box::new(|cc| Ok(Box::new(crate::ui::VelocimdApp::new(cc)))),
+                Box::new(move |cc| {
+                    Ok(Box::new(crate::ui::VelocimdApp::new_browser(
+                        cc, state, browser,
+                    )))
+                }),
             )
             .await;
         if let Err(error) = result {

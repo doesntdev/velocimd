@@ -18,7 +18,7 @@ const output=resolve(args.output),web=resolve(args.web)
 await mkdir(output,{recursive:true})
 const source=JSON.parse(await readFile(resolve(args.source),'utf8'))
 const reports=[]
-const runtimeNames=['index.html','velocimd.js','velocimd_bg.wasm']
+const runtimeNames=['index.html','velocimd.js','velocimd_bg.wasm','browser-store.js']
 const service=await serveWeb(web)
 const frame=page=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
 export const readSnapshot=page=>page.evaluate(()=>{const value=window.velocimd.ui_snapshot();return value?JSON.parse(value)||{}:{}})

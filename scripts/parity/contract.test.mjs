@@ -5,7 +5,7 @@ import { validateSnapshot, compareGeometry, validateVerification, REQUIRED_GATES
 
 const contract = JSON.parse(readFileSync(new URL('../../tests/parity/contract.json', import.meta.url), 'utf8'))
 const sourceSha256 = '1'.repeat(64)
-const assets = Object.fromEntries(['index.html', 'velocimd.js', 'velocimd_bg.wasm'].map(name => [name, '2'.repeat(64)]))
+const assets = Object.fromEntries(['index.html', 'velocimd.js', 'velocimd_bg.wasm', 'browser-store.js'].map(name => [name, '2'.repeat(64)]))
 // Unit-only structured fixtures; these are never emitted as real execution receipts.
 function snapshot() {
   return {schema:1,viewport:[1280,800],pixels_per_point:1,mode:'Split',light:false,split_ratio:0.5,

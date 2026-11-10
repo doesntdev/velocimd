@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export async function serveWeb(folder) {
-  const types={'index.html':'text/html; charset=utf-8','velocimd.js':'text/javascript; charset=utf-8','velocimd_bg.wasm':'application/wasm','source.zip':'application/zip','build.json':'application/json'}
+  const types={'browser-store.js':'text/javascript; charset=utf-8','index.html':'text/html; charset=utf-8','velocimd.js':'text/javascript; charset=utf-8','velocimd_bg.wasm':'application/wasm','source.zip':'application/zip','build.json':'application/json'}
   const server=createServer(async(request,response)=>{
     const name=new URL(request.url,'http://127.0.0.1').pathname.slice(1)||'index.html'
     if(name==='favicon.ico'){response.writeHead(204);response.end();return}

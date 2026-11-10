@@ -3710,6 +3710,7 @@ dependencies = [
  "egui_extras",
  "image",
  "insta",
+ "js-sys",
  "log",
  "native-dialog",
  "once_cell",

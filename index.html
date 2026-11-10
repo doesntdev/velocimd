@@ -51,13 +51,15 @@
     </form>
   </dialog>
   <script type="module">
+    import {BrowserDraftStore} from './browser-store.js';
     const $ = id => document.getElementById(id);
     let handle;
     let operationError = '';
     let importGeneration;
     let downloadCopy;
-    // One live editor per origin. Hold the lease until the actual App has flushed
-    // and been destroyed, including pagehide and back-forward-cache transitions.
+    // One live editor per origin. Explicit teardown drains admitted writes
+    // before release. Actual page termination may abort unfinished transactions;
+    // only an already acknowledged transaction is promised on reload.
     globalThis.velocimdAcquireLease = () => new Promise((resolve,reject) => {
       if (!navigator.locks?.request) {
         reject(new Error('This browser needs Web Locks to protect local drafts. Use a current browser or the desktop app.'));
@@ -68,10 +70,16 @@
           reject(new Error('Another Velocimd editor is open. Close it, then reload here.'));
           return;
         }
-        return new Promise(release => resolve(release));
+        return new Promise(release => resolve({release,store:new BrowserDraftStore()}));
       }).catch(reject);
     });
-    globalThis.velocimdReleaseLease = release => { if (typeof release === 'function') release(); };
+    globalThis.velocimdOpenDraftStore = token => token.store.open();
+    globalThis.velocimdSaveDraftPatch = (token,raw,replace) => token.store.admit(raw,replace);
+    globalThis.velocimdReleaseLease = token => {
+      // Closing synchronously rejects further admissions; drain every already
+      // admitted transaction before handing the SAME lock to a successor.
+      token.store.close().finally(() => token.release());
+    };
     // Rust calls this while WebRunner owns app_mut. A microtask cannot dispatch
     // listeners (and any resulting bridge calls) until that borrow has ended.
     globalThis.velocimdQueueEvent = (name,detail) => queueMicrotask(() => {
@@ -168,7 +176,7 @@
       if(raw!=null)download('velocimd-stored-recovery.json',raw,'application/json;charset=utf-8');
     };
     $('replace').onclick=() => {
-      if(confirm('Replace stored drafts with the open tabs? A verified copy of the old bytes must first fit in localStorage. Download stored recovery and your open notes before proceeding.'))action('replace-recovery');
+      if(confirm('Replace stored drafts with the open tabs? A verified copy of the old bytes must first fit in browser recovery storage. Download stored recovery and your open notes before proceeding.'))action('replace-recovery');
     };
     $('retry').onclick=() => action('retry');
     $('dismiss').onclick=() => { operationError='';sync(); };
@@ -178,6 +186,9 @@
         action('flush');handle.free();handle=undefined;window.velocimd=undefined;
         document.documentElement.dataset.ready='false';importGeneration=undefined;downloadCopy=undefined;
       }
+    });
+    window.addEventListener('storage',e => {
+      if(handle && (e.key===null || e.key==='velocimd.browser-drafts.v1'))action('verify');
     });
     window.addEventListener('pageshow',e => { if(e.persisted)location.reload(); });
     window.addEventListener('beforeunload',e => {
@@ -189,7 +200,8 @@
       }catch{e.preventDefault();e.returnValue='';}
     });
     try {
-      const {default:init,WebHandle}=await import('./velocimd.js');
+      const {default:init,WebHandle,validate_browser_drafts}=await import('./velocimd.js');
+      globalThis.velocimdValidateDrafts=validate_browser_drafts;
       await init();handle=new WebHandle();await handle.start($('velocimd-canvas'));
       window.velocimd=handle;sync();document.documentElement.dataset.ready='true';
       if(window.parent!==window)window.parent.postMessage({type:'velocimd-ready'},location.origin);

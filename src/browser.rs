@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 pub(crate) const MAX_IMPORT_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_DRAFT_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_DOCUMENTS: usize = 16;
-#[cfg(target_arch = "wasm32")]
-pub(crate) const DRAFT_KEY: &str = "velocimd.browser-drafts.v1";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +56,7 @@ pub(crate) fn import(name: &str, bytes: Vec<u8>) -> Result<Document, String> {
     Ok(Document::scratch(name, content))
 }
 
+#[cfg(test)]
 pub(crate) fn encode(state: &AppState) -> Result<String, String> {
     let drafts = Drafts {
         version: 1,
@@ -117,150 +116,7 @@ pub(crate) fn decode(value: &str) -> Result<AppState, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Default)]
-pub(crate) struct BrowserState {
-    pub context: Option<eframe::egui::Context>,
-    pub error: Option<String>,
-    pub message: String,
-    pub pending: bool,
-    pub import_generation: u32,
-    pub recovery: Option<String>,
-    // The App holds an origin-wide writer lease; also detect outside storage changes.
-    pub baseline: Option<String>,
-    pub blocked: bool,
-    pub published: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn storage() -> Result<web_sys::Storage, String> {
-    web_sys::window()
-        .ok_or("Browser window unavailable")?
-        .local_storage()
-        .map_err(|_| "Browser storage unavailable; download notes before leaving")?
-        .ok_or_else(|| "Browser storage disabled; download notes before leaving".into())
-}
-
-#[cfg(target_arch = "wasm32")]
-impl BrowserState {
-    pub fn load() -> (AppState, Self) {
-        let mut browser = Self::default();
-        let stored = storage().and_then(|s| {
-            s.get_item(DRAFT_KEY)
-                .map_err(|_| "Cannot read browser drafts; download notes before leaving".into())
-        });
-        match stored {
-            Ok(Some(value)) => {
-                browser.baseline = Some(value.clone());
-                match decode(&value) {
-                    Ok(state) => {
-                        browser.message = "Drafts restored on this browser".into();
-                        return (state, browser);
-                    }
-                    Err(error) => {
-                        browser.error = Some(format!(
-                            "{error}. Stored bytes preserved; download recovery before replacing."
-                        ));
-                        browser.recovery = Some(value);
-                        browser.blocked = true;
-                    }
-                }
-            }
-            Ok(None) => {
-                browser.message = "Local browser drafts · download files for a backup".into()
-            }
-            Err(error) => {
-                browser.error = Some(error);
-                browser.blocked = true;
-            }
-        }
-        (AppState::fresh(), browser)
-    }
-
-    pub fn save(&mut self, state: &AppState) -> Result<(), String> {
-        if self.blocked {
-            return Err(self
-                .error
-                .clone()
-                .unwrap_or_else(|| "Draft recovery required".into()));
-        }
-        let value = encode(state)?;
-        let storage = storage()?;
-        let current = storage
-            .get_item(DRAFT_KEY)
-            .map_err(|_| "Cannot read browser drafts")?;
-        if current != self.baseline {
-            self.recovery = current;
-            self.blocked = true;
-            return Err("Drafts changed in another browser tab. Current notes retained in memory; download them before reloading.".into());
-        }
-        storage.set_item(DRAFT_KEY, &value).map_err(|_| "Draft write failed (storage disabled or quota full); notes remain in memory. Download before leaving.")?;
-        // Acknowledged storage writes are read back before claiming durability.
-        self.baseline = Some(value.clone());
-        if storage
-            .get_item(DRAFT_KEY)
-            .map_err(|_| "Draft readback failed; download before leaving")?
-            .as_deref()
-            != Some(value.as_str())
-        {
-            return Err("Draft readback did not match; download before leaving".into());
-        }
-        self.pending = false;
-        self.error = None;
-        self.message = "Drafts saved on this browser · not a disk file".into();
-        Ok(())
-    }
-
-    pub fn retry(&mut self, state: &AppState) -> Result<(), String> {
-        // Invalid/conflicting original bytes must be explicitly recovered, never
-        // overwritten by Retry. Read-denied startup may resume only if still empty.
-        if self.recovery.is_none() {
-            let current = storage()?
-                .get_item(DRAFT_KEY)
-                .map_err(|_| "Cannot read browser drafts")?;
-            if current == self.baseline {
-                self.blocked = false;
-            }
-        }
-        let result = self.save(state);
-        if let Err(error) = &result {
-            self.error = Some(error.clone());
-        }
-        result
-    }
-
-    pub fn replace_recovered(&mut self, state: &AppState) -> Result<(), String> {
-        let storage = storage()?;
-        let raw = self
-            .recovery
-            .as_ref()
-            .ok_or("No stored recovery to replace")?;
-        if storage
-            .get_item(DRAFT_KEY)
-            .map_err(|_| "Cannot read browser drafts")?
-            .as_ref()
-            != Some(raw)
-        {
-            return Err(
-                "Stored drafts changed again; reload after downloading current notes".into(),
-            );
-        }
-        let backup_key = format!("{DRAFT_KEY}.recovery");
-        storage
-            .set_item(&backup_key, raw)
-            .map_err(|_| "Recovery backup failed; original drafts left intact")?;
-        if storage
-            .get_item(&backup_key)
-            .map_err(|_| "Cannot verify recovery backup")?
-            .as_ref()
-            != Some(raw)
-        {
-            return Err("Recovery backup mismatch; original drafts left intact".into());
-        }
-        self.baseline = Some(raw.clone());
-        self.blocked = false;
-        self.save(state)
-    }
-}
+pub(crate) use crate::browser_persistence::BrowserState;
 
 #[cfg(test)]
 mod tests {

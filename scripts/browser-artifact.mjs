@@ -49,7 +49,7 @@ export async function validateDistribution(directory, {pin, requirePin=false}={}
   assert(sourceNames.length>0 && sourceNames.every(safeSourcePath), 'Unsafe source member')
   assert(sourceNames.every(name=>typeof manifest.source.files[name]==='string'&&shaPattern.test(manifest.source.files[name])), 'Invalid source hash')
   assert.equal(sha(JSON.stringify(manifest.source.files)), manifest.source.sha256, 'Source inventory digest mismatch')
-  for (const name of ['LICENSE','Cargo.toml','Cargo.lock','src/lib.rs','src/ui.rs','src/ui/browser.rs','scripts/build-web.sh','tests/parity/contract.json']) {
+  for (const name of ['LICENSE','Cargo.toml','Cargo.lock','src/lib.rs','src/ui.rs','src/ui/browser.rs','web/browser-store.js','scripts/build-web.sh','tests/parity/contract.json']) {
     assert(Object.hasOwn(manifest.source.files,name), `Missing corresponding source: ${name}`)
   }
   assert.deepEqual(Object.keys(manifest.files).sort(), [...RUNTIME_ASSETS,'source.zip'].sort(), 'Wrong browser asset set')
@@ -89,7 +89,7 @@ export async function validateDistribution(directory, {pin, requirePin=false}={}
 }
 
 const extractDistribution = `import sys,zipfile,stat,pathlib,io
-expected={'index.html','velocimd.js','velocimd_bg.wasm','source.zip','build.json'}
+expected={'index.html','velocimd.js','velocimd_bg.wasm','browser-store.js','source.zip','build.json'}
 with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read(67108865))) as z:
  infos=z.infolist();names=[i.filename for i in infos]
  assert len(names)==len(set(names)) and set(names)==expected, 'Unsafe/incomplete web archive members'

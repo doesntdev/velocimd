@@ -5,7 +5,7 @@ export const REQUIRED_GATES = Object.freeze([
   'native-ui', 'browser-chromium', 'browser-firefox', 'visual-parity', 'negative-controls', 'tooling-tests',
   'browser-regressions-chromium', 'browser-regressions-firefox',
 ])
-export const RUNTIME_ASSETS = Object.freeze(['index.html', 'velocimd.js', 'velocimd_bg.wasm'])
+export const RUNTIME_ASSETS = Object.freeze(['index.html', 'velocimd.js', 'velocimd_bg.wasm', 'browser-store.js'])
 export const shaPattern = /^[0-9a-f]{64}$/
 
 export function validateVerification(report, {sourceSha256, assets, contract}) {
