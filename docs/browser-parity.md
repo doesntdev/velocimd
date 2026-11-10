@@ -2,6 +2,26 @@
 
 Velocimd has one Rust/egui editor and two platform adapters. The browser is not a second JavaScript editor. Shared command-bar and tab-widget painters own the icons, fonts, themes, spacing, filename field, editor, preview and divider. Native folder-menu data and browser document data differ; browser effects run after rendering releases its mutable app borrow.
 
+## Qualified build policy
+
+Native `cargo build --release` uses portable thin LTO/codegen-units=1. The browser
+builder deliberately overrides those release settings to opt-level=3,
+LTO=false/codegen-units=16, then removes only optional WASM name/DWARF custom
+sections with `scripts/strip_wasm.py`. Python 3.11+ and the existing locked
+wasm-bindgen CLI suffice; no Binaryen installation is required. Section stripping
+preserves every retained section byte of its actual input, not byte identity
+across a complete Rust rebuild. `python3 scripts/test_strip_wasm.py` checks the
+parser and atomic-output boundary separately from real browser acceptance.
+
+`target/web/build-policy.json` records the actual producer settings and strip
+input/output hashes. The packaged `build.json` carries that policy and rejects
+mismatched asset hashes, byte counts or binding-tool versions. It remains an
+explicitly approved/pinned artifact, not a self-authenticating report. See
+`PERFORMANCE.md` for measured size/CPU/startup boundaries; payload savings do not
+prove faster typing or a statistically reliable startup improvement. Public
+MIME/compression/cache checks and website pin updates belong to a separately
+authorized promotion, not a normal local build.
+
 ## Run the gate
 
 Use the pinned Rust toolchain (`rust-toolchain.toml`), Node 24.15.0 and pnpm 10.34.7. Initial setup:
@@ -28,6 +48,8 @@ The entrypoint runs architecture tests, fmt, locked Rust tests/Clippy, optimized
 The opt-in read-only probe records actual egui `Response` rectangles and shared state after a real frame. It does not add widgets, set expected rectangles, inject commands or change the renderer. Native output uses `VELOCIMD_UI_PROBE_PATH`: the file must not exist, is created exclusively once and retains its owned handle. Browser `WebHandle.set_ui_probe(true)` and `ui_snapshot()` expose the same measurements. Normal operation leaves probing disabled.
 
 Real pointer/keyboard journeys cover mode and theme controls, new/rename/edit/save, native Open/Save As pickers, browser file import/download/Save As, draft reload, close cancellation and command palette execution. Browser file import/download checks preserve UTF-8, BOM, CRLF and final-newline state exactly. Split resizing uses actual pointer movement. The separate safety suite retains import generation/replay, storage denial/quota/corruption/recovery and origin-writer ownership controls.
+
+The async lifecycle gate separately requires retained-page drain before lease release and actual navigation with an interrupted pre-transaction admission restoring the exact acknowledged body. The old synchronous “pending new tab on immediate reload” label is not used to imply that unacknowledged async edits are always durable.
 
 `tests/parity/baseline/` comes from the previously verified **published native v0.1.6** Linux package, binary SHA-256 `c7500f48dcdb47fa264b0390b4e326199fca8e16567f64b640e14c9603cc834b`, with capture metadata. Current native captures must remain compatible with that reference; current browser captures must match current native captures. Legitimate desktop design changes need an explicit reviewed baseline/contract update, not an automatically generated browser approval.
 

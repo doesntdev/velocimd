@@ -8,6 +8,11 @@ authors = ["Logan Hart"]
 repository = "https://github.com/doesntdev/velocimd"
 build = "build.rs"
 
+# Portable release policy qualified on native and browser artifacts.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [patch.crates-io]
 epaint = { path = "vendor/epaint-0.34.1" }
 

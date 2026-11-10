@@ -220,6 +220,23 @@ try {
     assert.equal((await state(page)).active,before.active);
     await clickTab(page,2);
   });
+  await test('actual navigation preserves acknowledged bytes when a pre-transaction admission is interrupted',async()=>{
+    const isolated=await browser.newContext({viewport:{width:1280,height:800}});const p=await isolated.newPage();
+    p.on('pageerror',e=>errors.push(String(e)));
+    try {
+      await ready(p);const acknowledged='acknowledged café 🦀\r\n';
+      await p.setInputFiles('#file',{name:'acknowledged.md',mimeType:'text/markdown',buffer:Buffer.from(acknowledged)});
+      await p.waitForFunction(s=>JSON.parse(velocimd.active_document()).content===s,acknowledged);
+      await p.evaluate(()=>velocimd.action('flush',0));await p.waitForFunction(()=>{const s=JSON.parse(velocimd.snapshot());return !s.pending&&!s.error;});
+      await click(p,'toolbar:edit');const r=(await probe(p)).regions.editor;await p.mouse.click(r[0]+60,r[1]+25);await p.keyboard.press('Control+Home');
+      await p.evaluate(()=>{window.blockedAdmissions=0;window.velocimdSaveDraftPatch=()=>{window.blockedAdmissions++;return new Promise(()=>{});};});
+      await p.keyboard.insertText('pending ');await p.waitForFunction(()=>JSON.parse(velocimd.active_document()).content.startsWith('pending '));
+      await p.evaluate(()=>velocimd.action('flush',0));await p.waitForFunction(()=>blockedAdmissions>0&&JSON.parse(velocimd.snapshot()).persistence.inflight);
+      p.on('dialog',d=>d.accept());await p.reload();await p.waitForFunction(()=>document.documentElement.dataset.ready==='true');
+      assert.equal((await active(p)).content,acknowledged,'Actual navigation may abandon an unacknowledged pre-transaction edit, never the acknowledged body');
+      assert.equal((await state(p)).error,null);
+    }finally{await isolated.close();await page.bringToFront();}
+  });
   await test('close active browser tab selects remaining document without deleting other notes', async () => {
     const before = await state(page);
     page.once('dialog',d=>d.dismiss());

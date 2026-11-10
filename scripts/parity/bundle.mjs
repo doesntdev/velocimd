@@ -5,7 +5,7 @@ import {resolve,join,dirname} from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {inventorySource,archiveSource,sourcePackages} from './source.mjs'
 import {RUNTIME_ASSETS} from '../parity-proof.mjs'
-import {sha,validateDistribution,DISTRIBUTION_FILES} from '../browser-artifact.mjs'
+import {sha,validateDistribution,validateBuildPolicy,DISTRIBUTION_FILES} from '../browser-artifact.mjs'
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..')
 const args=Object.fromEntries(process.argv.slice(2).map((value,index,array)=>value.startsWith('--')?[value.slice(2),array[index+1]]:[]).filter(item=>item.length))
@@ -23,13 +23,15 @@ for(const name of RUNTIME_ASSETS){
   await copyFile(input,join(folder,name))
   files[name]={bytes:bytes.length,sha256:sha(bytes)}
 }
+const buildPolicy=JSON.parse(await readFile(join(root,'target/web/build-policy.json'),'utf8'))
+validateBuildPolicy(buildPolicy,files['velocimd_bg.wasm'])
 await archiveSource(root,source,join(folder,'source.zip'))
 const sourceBytes=await readFile(join(folder,'source.zip'))
 files['source.zip']={bytes:sourceBytes.length,sha256:sha(sourceBytes)}
 const version=execFileSync(process.env.PYTHON||'python3',['-c','import tomllib,sys;print(tomllib.load(open(sys.argv[1],"rb"))["package"]["version"])',join(root,'Cargo.toml')],{encoding:'utf8'}).trim()
 const gates=report.gates.map(({id,status,exitCode,caseCount,cases,durationMs,stdoutSha256,stderrSha256,version})=>({id,status,exitCode,...(cases?{caseCount,cases}:{}),...(durationMs!==undefined?{durationMs}:{}),...(stdoutSha256?{stdoutSha256,stderrSha256}:{}),...(version?{version}:{})}))
 const verification={schema:1,status:'passed',sourceSha256:source.sha256,assets:report.assets,matrix:report.matrix,consoleErrors:report.consoleErrors,gates,tools:report.tools}
-const manifest={format:1,version,license:'AGPL-3.0-only',source,rustPackages:await sourcePackages(root),files,verification}
+const manifest={format:1,version,license:'AGPL-3.0-only',source,rustPackages:await sourcePackages(root),files,verification,buildPolicy}
 await writeFile(join(folder,'build.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx'})
 await validateDistribution(folder)
 const name=`velocimd-web-${version}.zip`,archive=join(output,name)

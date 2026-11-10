@@ -15,6 +15,26 @@ export function safeSourcePath(name) {
     !/(?:^|\/)(?:node_modules|__pycache__)(?:\/|$)/.test(name) && !/^(?:target|graphify-out)(?:\/|$)/.test(name) && !name.endsWith('.pyc')
 }
 
+export function validateBuildPolicy(policy, wasmAsset) {
+  const digest = value => typeof value === 'string' && shaPattern.test(value)
+  assert(policy && policy.schema === 1 && policy.cargoProfile === 'release', 'Invalid release build policy')
+  assert(policy.release && [true,false,'thin','fat'].includes(policy.release.lto), 'Invalid release LTO')
+  assert(Number.isSafeInteger(policy.release.codegenUnits) && policy.release.codegenUnits > 0, 'Invalid release codegen units')
+  assert(['0','1','2','3','s','z'].includes(policy.release.optLevel), 'Invalid release optimization level')
+  assert(typeof policy.rustc === 'string' && policy.rustc.length > 0 && typeof policy.wasmBindgen === 'string' && policy.wasmBindgen.length > 0, 'Missing compiler versions')
+  assert(digest(policy.wasmBindgenSha256), 'Missing binding tool digest')
+  for(const name of ['RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS'])assert(digest(policy.compilerFlagHashes?.[name]), 'Missing compiler input hash: '+name)
+  const post=policy.wasmPostprocess
+  assert(post && post.format===1 && post.policy==='optional-name-dwarf-only' && post.all_other_section_bytes_preserved===true, 'Unqualified WASM postprocessor')
+  assert(digest(post.before_sha256) && post.after_sha256===wasmAsset.sha256, 'Postprocessor asset digest mismatch')
+  assert(Number.isSafeInteger(post.before_bytes) && post.before_bytes>0 && post.before_bytes<=67108864 && post.after_bytes===wasmAsset.bytes, 'Postprocessor asset size mismatch')
+  assert(Array.isArray(post.removed), 'Missing removed-section inventory')
+  for(const section of post.removed)assert(section && typeof section.name==='string' && (section.name==='name'||section.name.startsWith('.debug_')) && Number.isSafeInteger(section.bytes) && section.bytes>0, 'Unqualified section removal')
+  assert.equal(post.before_bytes-post.after_bytes,post.removed.reduce((n,s)=>n+s.bytes,0),'Unbalanced removed-section total')
+  if(post.removed.length===0)assert.equal(post.before_sha256,post.after_sha256,'Identity postprocess digest changed')
+  return policy
+}
+
 const sourceArchiveCheck = `import sys,json,zipfile,hashlib,stat,tomllib
 m=json.load(sys.stdin)
 with zipfile.ZipFile(sys.argv[1]) as z:
@@ -70,6 +90,7 @@ export async function validateDistribution(directory, {pin, requirePin=false}={}
     bytesByName.set(name,bytes)
   }
   const wasm=bytesByName.get('velocimd_bg.wasm')
+  if(Object.hasOwn(manifest.source.files,'scripts/strip_wasm.py') || manifest.buildPolicy!==undefined)validateBuildPolicy(manifest.buildPolicy,manifest.files['velocimd_bg.wasm'])
   assert.deepEqual([...wasm.subarray(0,4)],[0,97,115,109],'Not a WASM module')
   const exports=new Set(WebAssembly.Module.exports(new WebAssembly.Module(wasm)).map(item=>item.name))
   for (const name of ['render_markdown','webhandle_new','webhandle_start','webhandle_snapshot','webhandle_active_document','webhandle_ui_snapshot','webhandle_set_ui_probe']) {
@@ -80,6 +101,7 @@ export async function validateDistribution(directory, {pin, requirePin=false}={}
   }))
   assert.equal(manifest.version,sourceMeta.version,'Cargo/browser version mismatch')
   assert.deepEqual(manifest.rustPackages,sourceMeta.rustPackages,'Locked Rust package metadata differs')
+  if(manifest.buildPolicy)assert.equal(manifest.buildPolicy.wasmBindgen,'wasm-bindgen '+sourceMeta.rustPackages['wasm-bindgen'],'Build policy binding tool differs from locked source')
   const assets=Object.fromEntries(RUNTIME_ASSETS.map(name=>[name,manifest.files[name].sha256]))
   validateVerification(manifest.verification,{sourceSha256:manifest.source.sha256,assets,contract:sourceMeta.contract})
   if (requirePin) assert(pin,'Missing approved browser artifact pin')

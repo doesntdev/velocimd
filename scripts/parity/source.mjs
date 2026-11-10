@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path'
 import assert from 'node:assert/strict'
 import { sha, safeSourcePath } from '../browser-artifact.mjs'
 
-const rootNames = new Set(['Cargo.toml','Cargo.lock','build.rs','Packager.toml','LICENSE','README.md','RELEASE_NOTES.md','index.html','rust-toolchain.toml','package.json','pnpm-lock.yaml','.gitignore','.gitattributes'])
+const rootNames = new Set(['Cargo.toml','Cargo.lock','build.rs','Packager.toml','LICENSE','README.md','PERFORMANCE.md','RELEASE_NOTES.md','index.html','rust-toolchain.toml','package.json','pnpm-lock.yaml','.gitignore','.gitattributes'])
 const sourcePrefixes = ['vendor/epaint-0.34.1/','src/','web/','assets/','scripts/','tests/','examples/','.github/workflows/','docs/']
 export const isSource = name => safeSourcePath(name) && (rootNames.has(name) || sourcePrefixes.some(prefix=>name.startsWith(prefix)))
 

@@ -1,5 +1,48 @@
 # Velocimd performance implementation and verification
 
+## Local issue #13 — build and browser payload policy
+
+Native optimized releases use thin LTO and one codegen unit. The same-source
+native executable comparison was 23,964,560 → 19,318,560 bytes (19.39% smaller).
+The 210-row optimized TextEdit sample matrix per policy had mixed small timing
+differences; this is a size/efficiency choice, not a general typing/FPS claim.
+No machine-specific CPU or fast-math flags are added.
+
+`bash scripts/build-web.sh` isolates browser compilation from native tuning:
+release opt-level 3, local/default LTO policy (`false`), and 16 codegen units.
+After the locked wasm-bindgen runs, the stdlib-only section tool removes optional
+`name`/`.debug_*` custom sections. Every other section byte must match that exact
+pre-strip module, including executable code, imports/exports and data. A full
+rebuild need not be byte-identical to an older build; preservation is guaranteed
+for the postprocessor's own input/output pair, not across compiler invocations.
+
+| Local browser artifact | Before | Selected |
+| --- | ---: | ---: |
+| Raw WASM | 8,732,213 | 8,002,828 |
+| gzip level 9 | 3,541,010 | 3,330,759 |
+| Brotli quality 11 | 2,637,573 | 2,483,475 |
+
+These are measured encoding sizes, not observed public wire transfers. The
+selected strip step removed a 737,878-byte name section from its 8,740,706-byte
+producer input. Required exports and actual browser behavior must still be
+checked; framing validation alone is not runtime acceptance.
+
+Fresh-process localhost/no-store navigation-to-ready samples (four per arm)
+were 399.8 → 400.5 ms median in Chromium and 475.5 → 497.5 ms in Firefox, with
+substantial run variation. No startup-latency improvement is claimed. Separate
+thin-LTO WASM and official Binaryen 133 `-O2` experiments were not selected:
+thin startup gains were inconsistent; `-O2` made gzip/Brotli larger despite a
+smaller raw module. Binaryen is not a required production build dependency.
+
+The producer records effective settings, compiler/binding-tool versions and
+hashes plus strip input/output identity in `target/web/build-policy.json`.
+The existing distribution manifest binds that record to its actual runtime
+asset. Source offers include the postprocessor, policy collector and this
+document. This is provenance, not self-authentication: approved archive/manifest
+pins and substantive parity gates remain required for promotion. Website pins,
+public MIME/compression/cache validation and deployment are separate and were
+not changed by this local source work.
+
 ## Local issue #9 increment — incremental edit processing
 
 This source-only increment is separate from the published desktop v0.1.6 and the
