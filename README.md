@@ -328,8 +328,8 @@ After merging and final verification, the GitHub Actions release workflow builds
 packages on Linux, macOS, and Windows from a tag matching the package version:
 
 ```bash
-git tag v0.1.6
-git push origin v0.1.6
+git tag v0.1.7
+git push origin v0.1.7
 ```
 
 The workflow can also be run manually from GitHub Actions.

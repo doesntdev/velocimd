@@ -1,44 +1,38 @@
-# Velocimd v0.1.6 — editor performance and desktop controls
+# Velocimd v0.1.7 — responsive Split and safer browser drafts
 
-## Desktop controls
+## Responsive editor and Split locking
 
-- Combine the light/dark controls into one theme toggle, preserving editor/preview font sizes and the existing `Alt+L` / `Alt+D` shortcuts.
-- Remove the theme name from the header and arrange the direct mode buttons as Edit–Split–View.
-- Drag the Split divider to resize the panes. The proportion is saved across restart; double-click resets to 50/50, with usable minimum pane widths.
-- Own native pickers with the app window, avoid Windows Shell-incompatible initial folder hints, and display picker errors rather than silently treating them as cancellation. Open File and Save As use the same handling.
+- Narrow app viewports below 720 logical pixels, or portrait workspaces, stack the editor above the preview. Wide landscape workspaces retain side-by-side panes. This uses the embedded app's own available size, not the outer website or a device guess.
+- Narrow controls wrap without removing commands; overflowing tabs scroll horizontally and the divider has a touch-sized target.
+- Activate Split, then activate it again to lock the current orientation. Activate it once more to return to automatic orientation. The toolbar and `Ctrl+3` share this cycle; a padlock badge indicates the lock.
+- Locking preserves orientation during window resizing, while the divider remains adjustable/resettable. It is view-session state and clears when leaving Split or restarting; note bytes and persisted draft schemas are unchanged by locking.
 
-## Faster editing and preview
+## Editing and preview work
 
-- Reuse editor layouts and draw only visible line numbers to reduce repeated work on large documents.
-- Retain semantic Markdown preview blocks and render the visible region, preserving lists, tables, code, references, images, Mermaid diagrams, and source-based Split synchronization.
-- Share folder-menu snapshots, cache sorting keys, and build only visible rows for large folders.
-- Restore inactive clean notes from metadata and load their bodies when selected, rather than reading every note during startup. Active notes and recovery drafts remain available immediately.
+- Capture actual editor mutations and incrementally update line metadata and eligible plain-paragraph preview regions, with complete-parser fallbacks for structural/context-sensitive Markdown, missed revisions and whole-buffer replacements.
+- Reuse guarded, bounded large-document layouts to avoid repeated whole-source copy/hash requests on eligible warm redraws and scrolling, while retaining the existing TextEdit input, selection, undo and canonical layout geometry.
+- Fix an inherited browser hidden-input history conflict that could echo Unicode insertions during redo. Ordinary text/composition and separate HTML filename controls retain their own behavior.
 
-## Safer, quieter persistence
+## Transactional browser drafts
 
-- Run native document and session writes through one ordered background worker, with revision-aware completion and coalesced session updates.
-- Preserve atomic file replacement, recovery drafts, save/rename ordering, path-collision checks, and graceful-shutdown draining.
-- Stop rewriting clean documents when switching working folders and avoid redundant ownership-path normalization.
+- Replace synchronous whole-session draft writes with asynchronous, per-document IndexedDB transactions and coherent session metadata. Acknowledgments apply to captured revisions only; newer edits remain pending.
+- Preserve and verify legacy drafts before migration, retain exact-byte recovery, keep the same exclusive-writer identity across versions, and prevent older clients from overwriting newer storage.
+- Preserve explicit Retry intent behind an outstanding failed save and keep uncertain writes distinguishable from acknowledged content. Quota, denied storage, corruption and outside changes remain recoverable without silently overwriting notes.
+- Browser limits remain 16 tabs, 1 MiB imports and a 4 MiB serialized logical session. Imports/downloads are copies, not filesystem overwrite or cloud backup. Only acknowledged transactions are promised after real page termination.
 
-## Fixed
+## Release and browser delivery
 
-- Scrolling over the right-hand preview in Split view now scrolls the shared document and keeps both panes synchronized, without clicking the preview first.
-- `Alt+L` and `Alt+D` switch themes without inserting their letters into a focused editor, including when another command arrives in the same frame. Command priority, ordinary typing, paste, IME input, AltGr, and command-palette behavior are preserved.
-- Decoded newline entities in large Markdown paragraphs no longer stall cold preview layout; UTF-8 progress and newline geometry have regression coverage.
+- Qualify native and WASM policies separately: native uses thin LTO and one codegen unit; browser code keeps its validated compiler policy and strips only optional name/debug custom sections.
+- Native executable size decreased 19.39% in the same-source policy comparison. The selected WASM size also decreased; fresh-process browser startup did not show a reliable gain. These are not general typing-latency claims.
+- The controlled browser persistence comparison reduced median synchronous flush-action blocking from 28.3 ms to 0.1 ms; total commit latency and keystroke latency are different measurements. See [PERFORMANCE.md](https://github.com/doesntdev/velocimd/blob/main/PERFORMANCE.md) for scope and limits.
+- The browser distribution includes the required storage runtime, exact corresponding source and a source/asset-bound verification receipt. The website imports an explicit SHA-256-pinned artifact rather than rebuilding an arbitrary sibling checkout.
 
-## Verification and limits
+## Verification and known limits
 
-- The current development candidate passes 138 local tests, formatting, strict all-target/all-feature Clippy, native compilation, and wasm32 compilation.
-- Isolated Linux native checks cover large-session restore, scrolling, mode/theme changes, exact saves, inactive-note activation, graceful close/reopen, and unchanged notes. Theme-shortcut checks include ordinary typing afterward as a positive control.
-- Reproducible paired CPU probes and their measurement limits are documented in [PERFORMANCE.md](https://github.com/doesntdev/velocimd/blob/main/PERFORMANCE.md). CPU pane timings are not GPU presentation or end-to-end typing-latency measurements.
-- No new application dependencies, services, database, account, or network requirement. The ordinary Markdown files-and-folders model and minimalist interface remain unchanged.
-- The separate navigation/sidebar work and headless-render CLI PR are not included in this release candidate.
-- Windows folder-picker handling has source and nonmodal regression coverage. The release workflow builds and tests on native platform runners; this is not a substitute for testing the interactive Windows picker on a Windows desktop.
+- The implementation checkpoint passed 191 local Rust tests, native/WASM strict checks, real Chrome/Firefox workflows and focused lock/resize tests. Release-source results and package identities are verified before publication.
+- A rapid zero-delay `Ctrl+3` event batch during a Firefox text-input/canvas focus handoff intermittently missed activation. Its cause remains unresolved. Passing frame-synchronized chords do not establish that this edge case is fixed; the on-canvas Split control remains available.
+- This release does not include the paused rich-block caching/virtualization candidate, a complete viewport-paged editor backend, or new navigation/sidebar/headless-render work. Large-document typing timings are mixed and giant-paragraph reflow remains.
+- Linux native GUI and Chromium/Firefox checks are exercised. Native-platform build/tests and packaging are not interactive Windows/macOS desktop acceptance or physical-phone keyboard/IME qualification.
+- Packages are unsigned/not notarized; Windows SmartScreen and macOS Gatekeeper may warn.
 
-## Packages
-
-The existing release workflow produces Linux `.deb`, `.AppImage`, and Arch package/PKGBUILD assets, a universal macOS `.dmg`, and a Windows x64 NSIS installer, plus `SHA256SUMS`.
-
-Package checksums are supplied in `SHA256SUMS`. The app remains unsigned/not notarized; macOS Gatekeeper and Windows SmartScreen may warn. Native GUI interaction is exercised on Linux; compilation or package generation alone does not certify Windows/macOS GUI behavior. WASM compilation does not imply browser filesystem/dialog support.
-
-**Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.5...v0.1.6
+**Full changelog:** https://github.com/doesntdev/velocimd/compare/v0.1.6...v0.1.7

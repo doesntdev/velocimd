@@ -3698,7 +3698,7 @@ dependencies = [
 
 [[package]]
 name = "velocimd"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
