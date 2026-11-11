@@ -102,6 +102,11 @@ impl VelocimdApp {
             "mode": format!("{:?}", self.state.mode),
             "light": self.state.theme.is_light(),
             "split_ratio": self.state.split_ratio,
+            "split_locked": self.split_axis_lock.is_some(),
+            "split_orientation": match self.last_split_axis {
+                splitter::SplitAxis::Horizontal => "side-by-side",
+                splitter::SplitAxis::Vertical => "over-under",
+            },
             "active_title": active.map(|d| d.title.as_str()).unwrap_or(""),
             "active_content": active.map(|d| d.content.as_str()).unwrap_or(""),
             "controls": self.ui_probe.controls,

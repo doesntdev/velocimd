@@ -69,6 +69,14 @@ work on either axis. Below 180 points per pane, the panes share the remaining
 space rather than escaping the allocation. Narrow chrome wraps commands, limits
 the filename/status, and scrolls overflowing tabs horizontally.
 
+Repeated activation of Split (toolbar, Ctrl+3, or its command action) first enters
+Split, then locks the current orientation, then unlocks to automatic. A small
+padlock badge and action-aware tooltip distinguish locking from mode selection.
+The divider remains adjustable/resettable while locked. This is view-session
+state, cleared on leaving Split or restart, not a document/draft-schema field.
+Locking alone schedules no note/session write. The read-only probe includes
+`split_locked` and `split_orientation` for actual rendered state checks.
+
 Focused checks (separate from the full parity/release gate):
 
 ```sh

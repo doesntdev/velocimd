@@ -150,6 +150,9 @@ pub struct VelocimdApp {
     file_dialog_builder: FileDialogBuilder,
     palette_selection: usize,
     palette_focus_requested: bool,
+    // A view-session choice, not document content or storage-format metadata.
+    split_axis_lock: Option<splitter::SplitAxis>,
+    last_split_axis: splitter::SplitAxis,
     ui_probe: probe::UiProbe,
 }
 
@@ -235,6 +238,8 @@ impl VelocimdApp {
             file_dialog_builder: FileDialogBuilder::default(),
             palette_selection: 0,
             palette_focus_requested: false,
+            split_axis_lock: None,
+            last_split_axis: splitter::SplitAxis::Horizontal,
             ui_probe: probe::UiProbe::default(),
         }
     }
@@ -248,6 +253,16 @@ impl VelocimdApp {
     }
 
     fn command_label(&self, command: Command) -> &'static str {
+        if command == Command::SetMode(EditorMode::Split) && self.state.mode == EditorMode::Split {
+            return if self.split_axis_lock.is_some() {
+                "Unlock split layout (automatic)"
+            } else {
+                match self.last_split_axis {
+                    splitter::SplitAxis::Horizontal => "Lock side-by-side layout",
+                    splitter::SplitAxis::Vertical => "Lock over/under layout",
+                }
+            };
+        }
         #[cfg(target_arch = "wasm32")]
         match command {
             Command::NewTab => return "New browser document",
@@ -319,6 +334,17 @@ impl VelocimdApp {
                 consume_theme_shortcuts(input)
             };
 
+            let split_repeat = input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Num3,
+                        pressed: true,
+                        repeat: true,
+                        ..
+                    }
+                )
+            });
             if input.consume_shortcut(&shortcut(command, egui::Key::K))
                 || input.consume_shortcut(&shortcut(command_shift, egui::Key::P))
             {
@@ -342,6 +368,10 @@ impl VelocimdApp {
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Num2)) {
                 Some(Command::SetMode(EditorMode::Preview))
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Num3)) {
+                // A held key is one activation, not a stream of lock toggles.
+                if split_repeat {
+                    return None;
+                }
                 Some(Command::SetMode(EditorMode::Split))
             } else if input.consume_shortcut(&shortcut(command, egui::Key::Tab)) {
                 Some(Command::CycleMode)
@@ -593,6 +623,31 @@ impl VelocimdApp {
                         .inner;
                     self.ui_probe
                         .control(probe::toolbar_id(*command), &response, active);
+                    if *command == Command::SetMode(EditorMode::Split)
+                        && self.split_axis_lock.is_some()
+                    {
+                        // A small padlock badge distinguishes locked Split from
+                        // the ordinary selected state without adding a control.
+                        let badge = egui::Rect::from_min_size(
+                            response.rect.right_bottom() - egui::vec2(12.0, 12.0),
+                            egui::vec2(11.0, 11.0),
+                        );
+                        let body = egui::Rect::from_min_size(
+                            badge.min + egui::vec2(2.0, 5.0),
+                            egui::vec2(7.0, 5.0),
+                        );
+                        ui.painter().rect_filled(badge, 2, tokens.chrome_bg);
+                        ui.painter().rect_filled(body, 1, tokens.accent);
+                        ui.painter().rect_stroke(
+                            egui::Rect::from_min_size(
+                                badge.min + egui::vec2(3.0, 1.0),
+                                egui::vec2(5.0, 6.0),
+                            ),
+                            2,
+                            egui::Stroke::new(1.3, tokens.accent),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
                     if response.clicked() {
                         self.run_command(ctx, *command);
                     }
@@ -1048,8 +1103,13 @@ impl VelocimdApp {
         self.state
             .ensure_document_loaded(self.state.active_document);
         self.ui_probe.region("app", ui.max_rect());
-        let split_axis = splitter::SplitAxis::for_size(ui.max_rect().size());
+        let automatic_axis = splitter::SplitAxis::for_size(ui.max_rect().size());
+        self.last_split_axis = self.split_axis_lock.unwrap_or(automatic_axis);
         self.command_bar(ui, ctx);
+        // The toolbar may have just unlocked a layout; apply the current
+        // viewport immediately, not the previous frame's locked orientation.
+        let split_axis = self.split_axis_lock.unwrap_or(automatic_axis);
+        self.last_split_axis = split_axis;
 
         ui.allocate_ui_with_layout(
             ui.available_size(),
@@ -1122,8 +1182,31 @@ impl VelocimdApp {
         );
     }
 
+    // Both target adapters invoke this before their platform-specific effects.
+    fn handle_split_activation(&mut self, ctx: &egui::Context, command: Command) -> bool {
+        match command {
+            Command::SetMode(EditorMode::Split) if self.state.mode == EditorMode::Split => {
+                self.split_axis_lock = if self.split_axis_lock.is_some() {
+                    None
+                } else {
+                    Some(self.last_split_axis)
+                };
+                ctx.request_repaint();
+                true
+            }
+            Command::SetMode(_) | Command::CycleMode => {
+                self.split_axis_lock = None;
+                false
+            }
+            _ => false,
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn run_command(&mut self, ctx: &egui::Context, command: Command) {
+        if self.handle_split_activation(ctx, command) {
+            return;
+        }
         self.ensure_persistence_worker(ctx);
         match command {
             Command::NewTab => self.create_markdown_file(ctx),

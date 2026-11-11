@@ -93,7 +93,7 @@ if (process.argv.includes('--unit')) {
     await target.locator('#file').setInputFiles({name:'responsive.md',mimeType:'text/markdown',buffer:Buffer.from(content)});
     await target.waitForFunction(s=>JSON.parse(velocimd.active_document()).content===s,content);
     await settled();
-    await click('toolbar:split');
+    if((await state()).mode!=='Split')await click('toolbar:split');
     const initialRatio=(await settled()).split_ratio;
     assert(Number.isFinite(initialRatio), 'missing measured split ratio');
     // Selection is made with real keyboard events, retained while dimensions change.
@@ -154,6 +154,80 @@ if (process.argv.includes('--unit')) {
       assert.equal((await snapshot()).split_ratio,0.5);
       results.push({drag:touch?'native-CDP-touch':'mouse',reset:true});
       console.log(`PASS stacked ${touch?'touch':'mouse'} drag and double-click reset`);
+    }
+    // The same Split action enters automatic mode, locks, then unlocks.
+    await target.evaluate(()=>{
+      window.splitKeyTrace=[];
+      for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
+        if(e.code==='Digit3')queueMicrotask(()=>window.splitKeyTrace.push({type,key:e.key,repeat:e.repeat,ctrl:e.ctrlKey,prevented:e.defaultPrevented,target:e.target.tagName}));
+      },true);
+    });
+    for(const input of ['pointer','keyboard']){
+      for(const startSize of [[1280,800],[390,844]]){
+        const originalIsStacked=startSize[0]<720;
+        await page.setViewportSize({width:startSize[0],height:startSize[1]});await settled();
+        await click('toolbar:edit');await settled();
+        if(input==='keyboard'){
+          const r=(await snapshot()).regions.editor;
+          const at=await point(r[0]+60,r[1]+25);await page.bringToFront();await page.mouse.click(at.x,at.y);
+          await target.waitForFunction(()=>document.hasFocus()&&document.activeElement instanceof HTMLInputElement&&!document.activeElement.id);
+        }
+        const activate=async()=>{
+          const before=await snapshot();const mode=(await state()).mode;
+          const locked=mode==='Split'?!before.split_locked:false;
+          if(input==='pointer')await click('toolbar:split');
+          else{
+            // Give the frame-driven canvas adapter the modifier/focus phase
+            // before the digit, as in a physical chord; never retry the action.
+            await page.keyboard.down('Control');await frame();
+            await page.keyboard.press('3');await page.keyboard.up('Control');await frame();
+          }
+          try{
+            await target.waitForFunction(locked=>{
+              const s=JSON.parse(velocimd.ui_snapshot());
+              return s.mode==='Split'&&s.split_locked===locked;
+            },locked,{timeout:5000});
+          }catch(error){
+            if(evidence)await writeFile(resolve(evidence,'shortcut-failure.json'),JSON.stringify({input,startSize,before,after:await snapshot(),trace:await target.evaluate(()=>window.splitKeyTrace)},null,2)+'\n');
+            throw error;
+          }
+          await settled();
+        };
+        await activate();
+        assert.equal((await state()).mode,'Split');assert.equal((await snapshot()).split_locked,false);
+        await activate();assert.equal((await snapshot()).split_locked,true);
+        const other=originalIsStacked?{width:1280,height:800}:{width:390,height:844};
+        await page.setViewportSize(other);await settled();
+        const locked=await snapshot();const e=locked.regions.editor_pane,p=locked.regions.preview_pane;
+        assert.equal(bottom(e)<=p[1],originalIsStacked,`${input}: locked orientation changed on resize`);
+        assert.equal(locked.active_content,'猫'+content.slice(1));
+        if(evidence&&input==='pointer')await page.screenshot({path:resolve(evidence,originalIsStacked?'locked-over-under-wide.png':'locked-side-by-side-phone.png')});
+        // Divider resize and reset remain available while orientation is locked.
+        const d=locked.regions.divider;const at=await point(d[0]+d[2]/2,d[1]+d[3]/2);
+        await page.mouse.move(at.x,at.y);await page.mouse.down();
+        await page.mouse.move(at.x+(originalIsStacked?0:25),at.y+(originalIsStacked?25:0),{steps:8});await page.mouse.up();await settled();
+        const dragged=await snapshot();
+        const extent=originalIsStacked?e[3]+p[3]:e[2]+p[2];
+        const minimum=Math.min(0.5,180/extent);
+        const effectiveBefore=originalIsStacked?e[3]/extent:e[2]/extent;
+        const expected=Math.max(0.15,Math.min(0.85,Math.max(minimum,Math.min(1-minimum,effectiveBefore+25/extent))));
+        assert(Math.abs(dragged.split_ratio-expected)<0.001,`${input}: locked divider did not follow its axis`);
+        if(Math.abs(expected-locked.split_ratio)>0.00001)assert(Math.abs(dragged.split_ratio-locked.split_ratio)>0.00001,'locked drag was a no-op');
+        assert.equal(dragged.split_locked,true);
+        const reset=dragged.regions.divider;const resetAt=await point(reset[0]+reset[2]/2,reset[1]+reset[3]/2);
+        await page.mouse.dblclick(resetAt.x,resetAt.y);await settled();
+        assert.equal((await snapshot()).split_ratio,0.5);assert.equal((await snapshot()).split_locked,true);
+        // Restore editor focus after testing the divider, so real shortcut input
+        // goes to the app rather than the browser's tab-selection accelerator.
+        if(input==='keyboard'){
+          const r=(await snapshot()).regions.editor;const at=await point(r[0]+60,r[1]+25);await page.bringToFront();await page.mouse.click(at.x,at.y);
+          await target.waitForFunction(()=>document.hasFocus()&&document.activeElement instanceof HTMLInputElement&&!document.activeElement.id);
+        }
+        await activate();assert.equal((await snapshot()).split_locked,false);assertResponsiveGeometry(await snapshot());
+        assert.equal((await snapshot()).active_content,'猫'+content.slice(1));
+        results.push({input,lockedOrientation:originalIsStacked?'over-under':'side-by-side',resizePreserved:true,unlockAutomatic:true});
+        console.log(`PASS ${input}: enter, lock ${originalIsStacked?'over-under':'side-by-side'}, resize, unlock`);
+      }
     }
     assert.deepEqual(errors,[],'browser page errors');
     if(evidence)await writeFile(resolve(evidence,'results.json'),JSON.stringify({browser:browserName,version:browser.version(),results,selectionAcrossResize:true,errors,physicalDeviceCoverage:false},null,2)+'\n');

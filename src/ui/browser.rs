@@ -198,6 +198,9 @@ impl VelocimdApp {
     }
 
     pub(super) fn run_command(&mut self, ctx: &egui::Context, command: Command) {
+        if self.handle_split_activation(ctx, command) {
+            return;
+        }
         let result = match command {
             Command::NewTab => self.browser_action("new", 0),
             Command::CloseFolderTab => {

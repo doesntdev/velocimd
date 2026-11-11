@@ -95,6 +95,12 @@ active axis; double-click resets to 50/50. Resizing alone preserves the saved
 editor share, selected mode and source. Narrow toolbars wrap without removing
 commands, and overflowing tabs scroll horizontally.
 
+Click **Split** (or press **Ctrl+3**) to enter automatic Split. Activate it again
+while selected to lock the current over/under or side-by-side orientation, then
+again to unlock. A padlock badge marks the locked view; the divider remains
+adjustable. Unlocking adapts immediately to the current viewport. This view-session
+lock clears when leaving Split or restarting the app; it does not change note bytes.
+
 ```bash
 rustup target add wasm32-unknown-unknown
 # Match Cargo.lock exactly (currently 0.2.120):
@@ -211,7 +217,7 @@ flowchart LR
 | `Ctrl+W` | Close active folder tab |
 | `Ctrl+1` | Editor mode |
 | `Ctrl+2` | Preview mode |
-| `Ctrl+3` | Split mode |
+| `Ctrl+3` | Enter Split; repeat to lock/unlock orientation |
 | `Ctrl+Tab` | Cycle editor / preview / split |
 | `Alt+L` | Switch to Velocilight |
 | `Alt+D` | Switch to Velocidark |

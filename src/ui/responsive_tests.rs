@@ -37,6 +37,7 @@ impl Harness {
             },
             |root| {
                 self.app.ui_probe.begin();
+                self.app.handle_shortcuts(&self.ctx);
                 egui::Frame::central_panel(root.style())
                     .inner_margin(egui::Margin::same(APP_PADDING))
                     .show(root, |ui| {
@@ -125,6 +126,137 @@ fn responsive_split_uses_app_bounds_and_resize_does_not_edit_or_persist() {
         assert_eq!(serde_json::to_value(&h.app.state).unwrap(), state_before);
         assert!(h.app.state_save_due.is_none() && h.app.autosave_due.is_none());
     }
+}
+
+#[test]
+fn responsive_split_reactivation_locks_current_axis_until_unlocked() {
+    for size in [egui::vec2(1000.0, 700.0), egui::vec2(390.0, 844.0)] {
+        let mut h = Harness::new(size, "# Lock does not edit\n");
+        h.app.state.mode = EditorMode::Edit;
+        h.settle();
+        h.app
+            .run_command(&h.ctx, Command::SetMode(EditorMode::Split));
+        h.settle();
+        let stacked = h.region("editor_pane").bottom() <= h.region("preview_pane").top();
+        h.app
+            .run_command(&h.ctx, Command::SetMode(EditorMode::Split));
+        h.size = if stacked {
+            egui::vec2(1000.0, 700.0)
+        } else {
+            egui::vec2(390.0, 844.0)
+        };
+        h.settle();
+        assert_eq!(
+            h.region("editor_pane").bottom() <= h.region("preview_pane").top(),
+            stacked,
+            "selected Split must lock the current orientation"
+        );
+        h.app
+            .run_command(&h.ctx, Command::SetMode(EditorMode::Split));
+        h.settle();
+        assert_ne!(
+            h.region("editor_pane").bottom() <= h.region("preview_pane").top(),
+            stacked,
+            "unlock must use the current viewport"
+        );
+        assert_eq!(
+            h.app.state.active_document().unwrap().content,
+            "# Lock does not edit\n"
+        );
+    }
+}
+
+#[test]
+fn responsive_ctrl3_enters_locks_unlocks_without_key_repeat_or_persistence() {
+    let mut h = Harness::new(
+        egui::vec2(1000.0, 700.0),
+        "# Shortcut remains source-safe\n",
+    );
+    h.app.state.mode = EditorMode::Edit;
+    h.settle();
+    let key = |pressed, repeat| egui::Event::Key {
+        key: egui::Key::Num3,
+        physical_key: Some(egui::Key::Num3),
+        pressed,
+        repeat,
+        modifiers: egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        },
+    };
+    h.render(vec![key(true, false)]);
+    h.render(vec![key(false, false)]);
+    h.settle();
+    assert_eq!(h.app.state.mode, EditorMode::Split);
+    assert!(h.app.split_axis_lock.is_none());
+    h.app.state_save_due = None;
+    h.app.autosave_due = None;
+    h.render(vec![key(true, false)]);
+    h.settle();
+    assert_eq!(h.app.split_axis_lock, Some(splitter::SplitAxis::Horizontal));
+    assert!(
+        h.app
+            .command_label(Command::SetMode(EditorMode::Split))
+            .starts_with("Unlock")
+    );
+    h.render(vec![key(true, true)]);
+    h.settle();
+    assert_eq!(h.app.split_axis_lock, Some(splitter::SplitAxis::Horizontal));
+    h.render(vec![key(false, false)]);
+    h.size = egui::vec2(390.0, 844.0);
+    h.settle();
+    assert!(h.region("editor_pane").right() <= h.region("preview_pane").left());
+    h.render(vec![key(true, false)]);
+    h.render(vec![key(false, false)]);
+    h.settle();
+    assert!(h.app.split_axis_lock.is_none());
+    assert!(h.region("editor_pane").bottom() <= h.region("preview_pane").top());
+    assert!(
+        h.app.state_save_due.is_none() && h.app.autosave_due.is_none(),
+        "pure view locking must not queue a note/session write"
+    );
+    assert_eq!(
+        h.app.state.active_document().unwrap().content,
+        "# Shortcut remains source-safe\n"
+    );
+    h.app
+        .run_command(&h.ctx, Command::SetMode(EditorMode::Split));
+    h.settle();
+    assert!(h.app.split_axis_lock.is_some());
+    h.app
+        .run_command(&h.ctx, Command::SetMode(EditorMode::Edit));
+    h.app
+        .run_command(&h.ctx, Command::SetMode(EditorMode::Split));
+    h.settle();
+    assert!(
+        h.app.split_axis_lock.is_none(),
+        "re-entering Split begins automatic"
+    );
+}
+
+#[test]
+fn responsive_split_pointer_and_shortcut_share_the_lock_state() {
+    let mut h = Harness::new(egui::vec2(390.0, 844.0), "# Click lock\n");
+    h.settle();
+    let snapshot = h.snapshot();
+    let button = snapshot["controls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "toolbar:split")
+        .unwrap();
+    h.click(rect(&button["rect"]).center());
+    h.settle();
+    assert_eq!(h.app.split_axis_lock, Some(splitter::SplitAxis::Vertical));
+    h.size = egui::vec2(1000.0, 700.0);
+    h.settle();
+    assert!(h.region("editor_pane").bottom() <= h.region("preview_pane").top());
+    h.app
+        .run_command(&h.ctx, Command::SetMode(EditorMode::Split));
+    h.settle();
+    assert!(h.app.split_axis_lock.is_none());
+    assert!(h.region("editor_pane").right() <= h.region("preview_pane").left());
 }
 
 #[test]
