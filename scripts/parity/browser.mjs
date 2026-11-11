@@ -95,7 +95,10 @@ try {
         const helper='/opt/google/chrome/chrome-sandbox'
         try{const info=await lstat(helper);if(info.uid===0&&(info.mode&0o4000))env.CHROME_DEVEL_SANDBOX=helper}catch(error){if(error.code!=='ENOENT')throw error}
       }
-      browser=await engine.launch({headless:false,env,...(engineName==='chromium'?{chromiumSandbox:true}:{})})
+      // Match the real browser scale to the context's one-pixel contract.
+      // A context-only DPR override leaves Chromium's device-pixel resize box
+      // at the host scale, creating a different backing/app viewport.
+      browser=await engine.launch({headless:false,env,...(engineName==='chromium'?{chromiumSandbox:true,args:['--force-device-scale-factor=1']}:{firefoxUserPrefs:{'layout.css.devPixelsPerPx':'1'}})})
       report.version=browser.version();report.sandbox=true
       const observe=page=>{
         page.on('pageerror',error=>report.consoleErrors.push(String(error)))

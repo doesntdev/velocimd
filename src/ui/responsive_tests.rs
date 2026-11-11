@@ -15,6 +15,9 @@ impl Harness {
         app.state.add_folder_tab(temp.path().to_path_buf());
         app.set_ui_probe(true);
         let ctx = egui::Context::default();
+        // This geometry/selection fixture deliberately sends Ctrl+Home.
+        // Pin that key vocabulary instead of inheriting the test host's OS.
+        ctx.set_os(egui::os::OperatingSystem::Nix);
         app.state.theme.apply_to(&ctx);
         egui_extras::install_image_loaders(&ctx);
         Self {

@@ -476,16 +476,15 @@ mod issue12_qualification {
         n
     }
 
-    fn rss_kib() -> usize {
-        std::fs::read_to_string("/proc/self/status")
-            .unwrap()
-            .lines()
-            .find_map(|line| {
-                line.strip_prefix("VmRSS:")
-                    .and_then(|s| s.split_whitespace().next())
-                    .and_then(|s| s.parse().ok())
-            })
-            .unwrap()
+    fn rss_kib() -> Option<usize> {
+        // Optional Linux-only observation, never a correctness prerequisite.
+        // Unsupported hosts report JSON null rather than fabricating a value.
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            line.strip_prefix("VmRSS:")
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse().ok())
+        })
     }
 
     impl Harness {
