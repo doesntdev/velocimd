@@ -18,6 +18,8 @@ use edit::{LineMetadataCache, RecordingBuffer};
 #[cfg(not(target_arch = "wasm32"))]
 mod persistence;
 mod probe;
+#[cfg(test)]
+mod responsive_tests;
 mod splitter;
 use editor_layout::EditorLayoutCache;
 
@@ -430,8 +432,14 @@ impl VelocimdApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let tokens = self.tokens();
+        let narrow = ui.available_width() < 720.0;
+        let status_height = if narrow && self.status_message.is_some() {
+            18.0 + ui.spacing().item_spacing.y
+        } else {
+            0.0
+        };
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), HEADER_BAR_HEIGHT),
+            egui::vec2(ui.available_width(), HEADER_BAR_HEIGHT + status_height),
             egui::Sense::hover(),
         );
 
@@ -448,10 +456,14 @@ impl VelocimdApp {
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(content_rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                .layout(if narrow {
+                    egui::Layout::top_down(egui::Align::Min)
+                } else {
+                    egui::Layout::left_to_right(egui::Align::Center)
+                }),
             |ui| {
                 ui.set_clip_rect(content_rect);
-                ui.set_height(HEADER_CONTROL_HEIGHT);
+                ui.set_height(content_rect.height());
                 ui.horizontal_centered(|ui| {
                     ui.set_height(HEADER_CONTROL_HEIGHT);
                     let logo_rect = ui
@@ -470,7 +482,7 @@ impl VelocimdApp {
                     self.folder_tabs(ui, ctx);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(status) = &self.status_message {
+                        if !narrow && let Some(status) = &self.status_message {
                             ui.horizontal(|ui| {
                                 ui.set_height(HEADER_CONTROL_HEIGHT);
                                 let rect = ui
@@ -492,14 +504,36 @@ impl VelocimdApp {
                         }
                     });
                 });
+                if narrow && let Some(status) = &self.status_message {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(status).small().color(tokens.text_muted),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(status);
+                }
             },
         );
     }
 
     fn command_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let tokens = self.tokens();
+        let narrow = ui.available_width() < 720.0;
+        let spacing = ui.spacing().item_spacing;
+        let content_width = (ui.available_width() - COMMAND_BAR_HORIZONTAL_PADDING * 2.0).max(0.0);
+        let columns = ((content_width + spacing.x) / (30.0 + spacing.x))
+            .floor()
+            .max(1.0) as usize;
+        let rows = if narrow {
+            Command::toolbar().len().div_ceil(columns) + 1
+        } else {
+            1
+        };
+        let height =
+            COMMAND_BAR_HEIGHT + (rows - 1) as f32 * (COMMAND_BAR_CONTROL_HEIGHT + spacing.y);
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), COMMAND_BAR_HEIGHT),
+            egui::vec2(ui.available_width(), height),
             egui::Sense::hover(),
         );
 
@@ -516,12 +550,19 @@ impl VelocimdApp {
         ui.scope_builder(
             egui::UiBuilder::new()
                 .max_rect(content_rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                .layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(narrow)),
             |ui| {
                 ui.set_clip_rect(content_rect);
-                ui.set_height(COMMAND_BAR_CONTROL_HEIGHT);
+                if narrow {
+                    ui.set_row_height(COMMAND_BAR_CONTROL_HEIGHT);
+                } else {
+                    ui.set_height(COMMAND_BAR_CONTROL_HEIGHT);
+                }
 
-                for command in Command::toolbar() {
+                for (index, command) in Command::toolbar().iter().enumerate() {
+                    if narrow && index > 0 && index % columns == 0 {
+                        ui.end_row();
+                    }
                     let active =
                         matches!(command, Command::SetMode(mode) if *mode == self.state.mode);
                     let tooltip_command = if *command == Command::ToggleTheme {
@@ -557,7 +598,11 @@ impl VelocimdApp {
                     }
                 }
 
-                ui.add_space(10.0);
+                if narrow {
+                    ui.end_row();
+                } else {
+                    ui.add_space(10.0);
+                }
                 self.file_name_editor(ui);
             },
         );
@@ -581,11 +626,13 @@ impl VelocimdApp {
             self.file_name_editor_text = visible_title;
         }
 
+        let filename_width = 220.0_f32.min((ui.available_width() - 16.0).max(24.0));
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut self.file_name_editor_text)
+                    .id(egui::Id::new(("file_name_editor", document_id)))
                     .font(egui::TextStyle::Button)
-                    .desired_width(220.0)
+                    .desired_width(filename_width)
                     .margin(egui::Margin::symmetric(8, 3))
                     .hint_text("Untitled")
                     .clip_text(true),
@@ -1000,6 +1047,8 @@ impl VelocimdApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.state
             .ensure_document_loaded(self.state.active_document);
+        self.ui_probe.region("app", ui.max_rect());
+        let split_axis = splitter::SplitAxis::for_size(ui.max_rect().size());
         self.command_bar(ui, ctx);
 
         ui.allocate_ui_with_layout(
@@ -1013,9 +1062,13 @@ impl VelocimdApp {
                     self.preview_pane(ui, false);
                 }
                 EditorMode::Split => {
-                    let layout = splitter::show(ui, self.state.split_ratio, self.tokens());
+                    let layout =
+                        splitter::show(ui, self.state.split_ratio, self.tokens(), split_axis);
+                    self.ui_probe.region("editor_pane", layout.editor);
+                    self.ui_probe.region("preview_pane", layout.preview);
+                    self.ui_probe.region("divider", layout.divider);
                     if let Some(rect) = layout.response_rect {
-                        self.ui_probe.region("divider", rect);
+                        self.ui_probe.region("divider_hit", rect);
                     }
                     if let Some(ratio) = layout.changed_ratio {
                         self.state.split_ratio = ratio;
@@ -1051,9 +1104,19 @@ impl VelocimdApp {
                             );
                         }
                     }
-                    self.editor_pane(&mut editor, ctx, true);
-
+                    let outcome = self.editor_pane(&mut editor, ctx, true);
+                    if split_axis == splitter::SplitAxis::Vertical
+                        && outcome.clicked_line.is_some()
+                        && let PreviewSyncAnchor::ScreenY(y) = self.preview_sync_anchor
+                    {
+                        // A clicked source line has the same pane-local y, not the
+                        // same screen y when the preview is below the editor.
+                        self.preview_sync_anchor = PreviewSyncAnchor::ScreenY(
+                            y + layout.preview.top() - layout.editor.top(),
+                        );
+                    }
                     self.preview_pane(&mut preview, true);
+                    splitter::raise_hit_target(ui, &layout);
                 }
             },
         );

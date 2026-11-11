@@ -55,6 +55,39 @@ The async lifecycle gate separately requires retained-page drain before lease re
 
 Geometry comparisons are strict. Raster comparison has named color/antialias allowances, per-region/control limits and overlapping local tiles so a local loss cannot disappear in a page-wide average. Exceptions are limited to navigation data and declared capability availability; the editor, preview and whole toolbar are never blanket-masked. Intentional private mutations must prove that missing toolbar content and a shifted control fail the normal oracle. Verifier unit tests also reject missing/stale/failed receipts and corrupt/unsafe archives.
 
+## Responsive Split
+
+The shared Rust layout uses its actual application allocation, not the outer
+browser/device width. Width <720 egui logical points **or** width <height stacks
+editor above preview; a narrow keyboard-shortened viewport stays stacked. Wide
+landscape keeps the original control and pane geometry. The stored ratio remains
+the editor's share along the active axis; passive resizing/minimum-pane clamping
+does not save a new ratio, edit source, change selection or switch mode. The
+stacked divider has a 24-point hit strip/grip; desktop keeps its 8-point painted
+allocation with a bounded 24-point interaction strip. Drag and double-click reset
+work on either axis. Below 180 points per pane, the panes share the remaining
+space rather than escaping the allocation. Narrow chrome wraps commands, limits
+the filename/status, and scrolls overflowing tabs horizontally.
+
+Focused checks (separate from the full parity/release gate):
+
+```sh
+cargo test --locked --lib responsive_
+node scripts/test-responsive.mjs --unit # geometry-oracle tests only
+# After building the current candidate with the pinned toolchain:
+WEB_ROOT=target/web node scripts/test-responsive.mjs
+# Or test the actual same-origin site iframe, with no second app page:
+RESPONSIVE_URL=http://127.0.0.1:PORT/ FRAME_SELECTOR='.browser-frame iframe' \
+  node scripts/test-responsive.mjs
+```
+
+The browser script measures the real canvas and sends pointer, keyboard and
+Chromium touch input. Its `--unit` mode only qualifies the geometry oracle; it
+must not be reported as browser execution. Neither a phone CSS viewport nor
+synthetic browser touch establishes physical iOS keyboard/IME behavior. Read-only
+probe regions `app`, `editor_pane`, `preview_pane` and `divider_hit` expose allocated
+bounds alongside the existing visible editor/preview and painted divider.
+
 ## Honest platform differences
 
 - Native navigation tabs contain filesystem folders and directory menus. Browser tabs contain origin-local documents, not mounted folders. The working-folder command is explicitly unavailable in the browser.

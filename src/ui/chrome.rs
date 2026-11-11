@@ -50,99 +50,135 @@ impl VelocimdApp {
         let mut selected_file = None;
         #[cfg(not(target_arch = "wasm32"))]
         let mut selected_folder = None;
-        ui.horizontal_centered(|ui| {
-            for tab in tabs {
-                let button =
-                    egui::Button::new(egui::RichText::new(&tab.title).color(if tab.active {
-                        tokens.text
-                    } else {
-                        tokens.text_muted
-                    }))
-                    .fill(if tab.active {
-                        tokens.panel_bg_active
-                    } else {
-                        tokens.panel_bg
-                    })
-                    .stroke(egui::Stroke::new(
-                        1.0_f32,
-                        if tab.active {
-                            tokens.border_active
+        let spacing = ui.spacing().item_spacing.x;
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let padding = ui.spacing().button_padding.x * 2.0;
+        let needed_width = 30.0
+            + spacing
+            + tabs
+                .iter()
+                .map(|tab| {
+                    let text_width = ui.fonts_mut(|fonts| {
+                        fonts
+                            .layout_no_wrap(tab.title.clone(), font.clone(), tokens.text)
+                            .size()
+                            .x
+                    });
+                    (text_width + padding).max(132.0)
+                        + spacing
+                        + if can_close { 20.0 + spacing } else { 0.0 }
+                })
+                .sum::<f32>();
+        let scroll_tabs = needed_width > ui.available_width();
+        let paint_tabs = |ui: &mut egui::Ui| {
+            ui.horizontal_centered(|ui| {
+                for tab in tabs {
+                    let button =
+                        egui::Button::new(egui::RichText::new(&tab.title).color(if tab.active {
+                            tokens.text
                         } else {
-                            tokens.border
-                        },
-                    ))
-                    .corner_radius(6)
-                    .min_size(egui::vec2(132.0, HEADER_CONTROL_HEIGHT));
-                let (response, _) =
-                    egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+                            tokens.text_muted
+                        }))
+                        .fill(if tab.active {
+                            tokens.panel_bg_active
+                        } else {
+                            tokens.panel_bg
+                        })
+                        .stroke(egui::Stroke::new(
+                            1.0_f32,
+                            if tab.active {
+                                tokens.border_active
+                            } else {
+                                tokens.border
+                            },
+                        ))
+                        .corner_radius(6)
+                        .min_size(egui::vec2(132.0, HEADER_CONTROL_HEIGHT));
+                    let (response, _) =
+                        egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            folder_tab_menu(
+                                ui,
+                                &mut self.folder_entry_cache,
+                                &tab.path,
+                                &mut selected_file,
+                                &mut selected_folder,
+                            );
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                ui.label(&tab.title);
+                                ui.small("Browser document · local draft only");
+                                ui.small("Open imports a copy; Save downloads a copy.");
+                            }
+                        });
+                    self.ui_probe
+                        .control(format!("tab:{}", tab.index), &response, tab.active);
+                    if response.clicked() {
                         #[cfg(not(target_arch = "wasm32"))]
-                        folder_tab_menu(
-                            ui,
-                            &mut self.folder_entry_cache,
-                            &tab.path,
-                            &mut selected_file,
-                            &mut selected_folder,
-                        );
+                        {
+                            self.state.active_folder_tab = tab.index;
+                            self.persist_state();
+                        }
                         #[cfg(target_arch = "wasm32")]
                         {
-                            ui.label(&tab.title);
-                            ui.small("Browser document · local draft only");
-                            ui.small("Open imports a copy; Save downloads a copy.");
+                            let _ = self.browser_action("select", tab.index);
                         }
-                    });
-                self.ui_probe
-                    .control(format!("tab:{}", tab.index), &response, tab.active);
-                if response.clicked() {
+                    }
+                    response.on_hover_text(&tab.hover);
+                    if can_close {
+                        let close = compact_icon_button(
+                            ui,
+                            Icon::X,
+                            format!(
+                                "Close {} tab {}",
+                                if cfg!(target_arch = "wasm32") {
+                                    "document"
+                                } else {
+                                    "folder"
+                                },
+                                tab.hover
+                            ),
+                        );
+                        self.ui_probe
+                            .control(format!("tab-close:{}", tab.index), &close, false);
+                        if close.clicked() {
+                            close_requested = Some(tab.index);
+                        }
+                    }
+                }
+                let add = icon_button(
+                    ui,
+                    Icon::Plus,
+                    false,
+                    if cfg!(target_arch = "wasm32") {
+                        "New browser document".to_string()
+                    } else {
+                        "New folder tab".to_string()
+                    },
+                );
+                self.ui_probe.control("tab-add", &add, false);
+                if add.clicked() {
                     #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        self.state.active_folder_tab = tab.index;
-                        self.persist_state();
-                    }
+                    self.select_folder_tab(ctx);
                     #[cfg(target_arch = "wasm32")]
-                    {
-                        let _ = self.browser_action("select", tab.index);
-                    }
+                    self.run_command(ctx, Command::NewTab);
                 }
-                response.on_hover_text(&tab.hover);
-                if can_close {
-                    let close = compact_icon_button(
-                        ui,
-                        Icon::X,
-                        format!(
-                            "Close {} tab {}",
-                            if cfg!(target_arch = "wasm32") {
-                                "document"
-                            } else {
-                                "folder"
-                            },
-                            tab.hover
-                        ),
-                    );
-                    self.ui_probe
-                        .control(format!("tab-close:{}", tab.index), &close, false);
-                    if close.clicked() {
-                        close_requested = Some(tab.index);
-                    }
-                }
-            }
-            let add = icon_button(
-                ui,
-                Icon::Plus,
-                false,
-                if cfg!(target_arch = "wasm32") {
-                    "New browser document".to_string()
-                } else {
-                    "New folder tab".to_string()
-                },
-            );
-            self.ui_probe.control("tab-add", &add, false);
-            if add.clicked() {
-                #[cfg(not(target_arch = "wasm32"))]
-                self.select_folder_tab(ctx);
-                #[cfg(target_arch = "wasm32")]
-                self.run_command(ctx, Command::NewTab);
-            }
-        });
+            });
+        };
+        if scroll_tabs {
+            // Bound the navigation allocation, not its content: every tab/close/add
+            // control stays reachable by horizontal wheel or touch scrolling.
+            let output = egui::ScrollArea::horizontal()
+                .id_salt("navigation_tabs")
+                .max_width(ui.available_width().max(0.0))
+                .max_height(HEADER_CONTROL_HEIGHT)
+                .min_scrolled_width(0.0)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, paint_tabs);
+            self.ui_probe.region("tabs_viewport", output.inner_rect);
+        } else {
+            paint_tabs(ui);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = selected_folder {

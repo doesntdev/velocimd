@@ -88,6 +88,13 @@ The standalone browser app runs the same `VelocimdApp` egui editor and preview,
 with document tabs instead of native folder tabs. It does not write to the
 imported file or access a desktop working folder.
 
+Split adapts to the app's own allocation (including when embedded): below 720
+logical points wide, or in portrait, the editor sits above the preview. Wide
+landscape retains the desktop left/right layout. Drag the divider along its
+active axis; double-click resets to 50/50. Resizing alone preserves the saved
+editor share, selected mode and source. Narrow toolbars wrap without removing
+commands, and overflowing tabs scroll horizontally.
+
 ```bash
 rustup target add wasm32-unknown-unknown
 # Match Cargo.lock exactly (currently 0.2.120):
